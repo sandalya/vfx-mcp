@@ -556,6 +556,24 @@ mcp.lifespan = server_lifespan
 
 
 # -------------------------------------------------------------------
+# Project Context (lets Claude Desktop read README)
+# -------------------------------------------------------------------
+@mcp.tool()
+def get_project_context(ctx: Context) -> str:
+    """
+    Returns project README with full context: topology, security setup,
+    available tools, workflow rules, and sync instructions.
+    Call this at the start of a conversation to understand the project.
+    """
+    readme_path = os.path.join(script_dir, "README.md")
+    try:
+        with open(readme_path, "r", encoding="utf-8") as f:
+            return f.read()
+    except FileNotFoundError:
+        return "README.md not found at " + readme_path
+
+
+# -------------------------------------------------------------------
 # Original Houdini Tools (Get/Create Node, Execute Code)
 # -------------------------------------------------------------------
 @mcp.tool()
