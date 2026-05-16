@@ -1,64 +1,153 @@
-﻿# VFX MCP Setup — контекст сесії
+# VFX MCP — Houdini ↔ Claude pipeline
+
+## Що це
+Pipeline для зв'язку Claude (Desktop/Code) з Houdini через MCP протокол.
+Claude Desktop бачить сцену, може створювати ноди, рендерити — через VPN на робочу машину.
 
 ## Хто я
 Senior CG-artist Plarium, Houdini 21.0.596 + Nuke 16.0v5.
-Локальна Win (юзер gamai) ←VPN Loky VPD→ Робоча Win PC-137 (юзер Admin).
 
 ## Топологія
-- Локальна: 192.168.72.194 (Ethernet) + 10.10.11.41 (VPN, СТАБІЛЬНА)
-- Робоча: 10.10.10.31 — там Houdini + продакшен інфра
-- VPN не приватний: у 10.10.10.x ферма, ftrack, машини колег. Голий 0.0.0.0 без allowlist неприйнятний.
 
-## Стан інфри (готово)
-- Claude Desktop на локальній (поставлено)
-- OpenSSH Server на робочій: працює, аліас `ssh pc137`, ключ `~/.ssh/id_ed25519_pc137`, IdentitiesOnly yes
-- Firewall на робочій: правило `OpenSSH-Server-In-TCP-VPN-Only` пускає тільки 10.10.11.41:22
-- Репо `capoom/houdini-mcp` склонований у `C:\houdini-mcp\` на робочій
-- Плагін у `C:\Users\Admin\Documents\houdini21.0\scripts\python\houdinimcp\` — звідти Houdini імпортує
-- Sandbox-сцена: `C:/houdini_mcp_sandbox/houdiniworkscene_cld.hip` (481 нода)
-- Плагін стартує: `import houdinimcp; houdinimcp.start_server()` → слухає 127.0.0.1:9876, відповідає JSON
+```
+Claude Desktop (локальна)
+    ↓ stdio (MCP)
+Bridge: houdini_mcp_server.py (локальна, .venv)
+    ↓ TCP 10.10.10.31:9876
+Houdini plugin: houdinimcp/server.py (PC-137, робоча)
+    ↓ PySide6 QTimer
+Houdini 21.0.596 (сцена, ноди, рендер)
+```
+
+- **Локальна:** 192.168.72.194 (Ethernet) + 10.10.11.41 (VPN, стабільна)
+- **Робоча PC-137:** 10.10.10.31 — Houdini + продакшен інфра
+- **SSH:** `ssh pc137` (ключ `~/.ssh/id_ed25519_pc137`, IdentitiesOnly yes)
+- **VPN не приватний:** у 10.10.10.x ферма, ftrack, машини колег
+
+## Структура репо
+
+```
+vfx-mcp/                        ← git repo (github.com/sandalya/vfx-mcp)
+├── README.md                   ← цей файл
+├── .gitignore
+├── houdini_mcp_server.py       ← Bridge MCP server (host=10.10.10.31)
+├── urls.env                    ← OPUS API ключі (в .gitignore)
+├── .venv/                      ← Python 3.14 venv (в .gitignore)
+├── remote/                     ← копія runtime-плагіна з PC-137
+│   └── houdinimcp/
+│       ├── __init__.py         ← start_server(host, port), без auto-start
+│       ├── server.py           ← PySide6, allowlist, hardened dispatcher
+│       ├── HoudiniMCPRender.py ← рендер-функції
+│       └── pyproject.toml
+├── upstream/                   ← оригінал з capoom/houdini-mcp (reference)
+│   ├── README.md, LICENSE, main.py, pyproject.toml, uv.lock, ...
+│   └── ...
+├── patches/                    ← PS1 скрипти використані для патчів
+│   ├── patch_init.ps1
+│   ├── patch_ipfilter.ps1
+│   └── patch_server.ps1
+└── .claude/                    ← Claude Code memory (в .gitignore)
+```
+
+## Безпека (що зроблено)
+
+### IP allowlist
+- `ALLOWED_CLIENTS = {'127.0.0.1', '10.10.11.41'}` в `server.py`
+- Чужі IP → лог `BLOCKED_IP` в `~/houdini_mcp_audit.log` + close
 - Audit-log: `C:\Users\Admin\houdini_mcp_audit.log`
-- Бекапи зроблено: `C:\Users\gamai\backups\local_2026-05-16_2139` та `C:\Users\Admin\backups\pc137_2026-05-16_2140`
 
-## ВАЖЛИВО — стан файлів плагіна
-Дві копії, ХЕШІ РІЗНІ:
-- `C:\houdini-mcp\server.py` (репо) — містить `from PySide2 import...`, тобто фікс PySide6 сюди НЕ доїхав
-- `C:\Users\Admin\Documents\houdini21.0\scripts\python\houdinimcp\server.py` (runtime, який Houdini імпортує)
+### Hardened dispatcher
+Видалено з handlers (методи в класі залишились, але не маршрутизуються):
+- `execute_code` — довільне виконання коду
+- `modify_node` — зміна параметрів нод
+- `delete_node` — видалення нод
 
-Невідомо який з них містить актуальні правки (PySide6, audit-log, видалення execute_code/modify_node/delete_node з диспатчера).
-ПЕРША ДІЯ Claude Code: через `ssh pc137` прочитати обидва файли, звірити, з'ясувати правду.
+### Auto-start вимкнено
+`import houdinimcp` більше не стартує сервер автоматично. Запуск вручну:
+```python
+import houdinimcp
+houdinimcp.start_server(host='0.0.0.0')  # для доступу ззовні
+```
 
-## Що не працює (НЕ КОПАТИ)
-SSH-тунель `ssh -L 9876:127.0.0.1:9876` — Windows OpenSSH quirk з loopback forwarding під SYSTEM. Витратили багато часу. Рішення — НЕ тунель.
+## Файли на PC-137 (runtime)
 
-## Поточний план
-1. З'ясувати який server.py справжній (звірити з тим що в Houdini)
-2. Прибрати auto-start з `__init__.py` (зараз `initialize_plugin()` стартує плагін при імпорті — небажано)
-3. Додати `host` параметр у `start_server()` (`__init__.py`) для пробросу в `HoudiniMCPServer(host=...)`
-4. Запатчити правильний server.py:
-   - Константа вгорі: `ALLOWED_CLIENTS = {'127.0.0.1', '10.10.11.41'}`
-   - У `_process_server()` після `self.client, address = self.socket.accept()` — фільтр по `address[0]`
-   - Чужі IP: лог `BLOCKED_IP` у audit, `client.close()`, не зберігати в `self.client`
-5. Reload плагіна в Houdini Python Shell (юзер робить ВРУЧНУ — Houdini зона користувача)
-6. `Test-NetConnection 10.10.10.31 -Port 9876` з локальної — має бути True
-7. Прямий тест get_scene_info на 10.10.10.31:9876 без тунелю
-8. Bridge `houdini_mcp_server.py` на локальну з hardcoded host = `10.10.10.31`
-9. Claude Desktop config → перший end-to-end
+| Шлях | Що |
+|------|----|
+| `C:\Users\Admin\Documents\houdini21.0\scripts\python\houdinimcp\` | Runtime плагін (Houdini імпортує звідси) |
+| `C:\houdini-mcp\` | Оригінальний clone capoom/houdini-mcp (застарілий, PySide2) |
+| `C:\houdini_mcp_sandbox\houdiniworkscene_cld.hip` | Sandbox-сцена (481 нода) |
+| `C:\Users\Admin\houdini_mcp_audit.log` | Audit log |
 
-## Що вже зроблено в плагіні (НЕ ПОВТОРЮВАТИ)
-- Видалено з диспатчера: `execute_code`, `modify_node`, `delete_node` (методи в класі залишились)
-- Audit-log пише в `~/houdini_mcp_audit.log` — інлайн-блок у обробці команди, не функція
-- Бекап: `C:\houdini-mcp\server.py.orig`
+### Бекапи на PC-137
+- `server.py.orig` — до всіх змін
+- `server.py.orig_dispatcher` — до видалення execute_code/modify_node/delete_node
+- `server.py.orig_allowlist` — до додавання IP-фільтра
+- `__init__.py.orig_allowlist` — до зміни start_server()
 
-## Файловий workflow на робочій (стиль користувача)
-- Малі правки: `Set-Content` через PowerShell, sed-style
-- Великі патчі: PowerShell here-string `@'...'@ | Set-Content` потім `& hython.exe скрипт.py`
+## Claude Desktop
+
+### Конфіг (UWP / Microsoft Store версія!)
+```
+C:\Users\gamai\AppData\Local\Packages\Claude_pzs8sxrjxfjjc\LocalCache\Roaming\Claude\claude_desktop_config.json
+```
+**НЕ** `%AppData%\Roaming\Claude\` — це UWP-специфіка.
+
+### Доступні MCP tools (Houdini)
+- `get_scene_info` — інфо про сцену
+- `create_node` — створення нод
+- `get_node_info` — інфо про ноду
+- `set_material` — матеріали
+- `render_single_view` / `render_quad_view` / `render_specific_camera` — рендер
+- `import_opus_url` — імпорт OPUS моделей
+- `get_asset_lib_status` — статус бібліотеки ассетів
+
+### Заблоковані (з диспатчера)
+- `execute_code`, `modify_node`, `delete_node`
+
+## Workflow
+
+| Задача | Де |
+|--------|----|
+| Патчити код, SSH, git, налаштування | **Claude Code** (термінал) |
+| Працювати з Houdini-сценою | **Claude Desktop** (MCP tools) |
+| Щось зламалось | **Claude Code** |
+
+## Запуск плагіна в Houdini Python Shell
+
+```python
+import houdinimcp
+houdinimcp.start_server(host='0.0.0.0')
+```
+
+Зупинка + перезапуск після змін:
+```python
+houdinimcp.stop_server()
+import importlib, houdinimcp.server
+importlib.reload(houdinimcp.server)
+importlib.reload(houdinimcp)
+houdinimcp.start_server(host='0.0.0.0')
+```
+
+## Sync: локальна → PC-137
+
+Після зміни файлів в `remote/houdinimcp/`:
+```bash
+scp remote/houdinimcp/server.py pc137:"C:/Users/Admin/Documents/houdini21.0/scripts/python/houdinimcp/server.py"
+scp remote/houdinimcp/__init__.py pc137:"C:/Users/Admin/Documents/houdini21.0/scripts/python/houdinimcp/__init__.py"
+```
+Потім reload в Houdini Python Shell (див. вище).
+
+## Що не працює (не копати)
+SSH-тунель `ssh -L 9876:127.0.0.1:9876` — Windows OpenSSH quirk з loopback forwarding під SYSTEM. Рішення — прямий TCP через VPN з allowlist.
+
+## Файловий workflow на робочій
 - Syntax check: `& "C:\Program Files\Side Effects Software\Houdini 21.0.596\bin\hython.exe" -c "import ast; ast.parse(open('...').read()); print('OK')"`
-
-## Жорсткі правила для Claude Code
-- Перед кожною командою кажи: машина (локальна/робоча), шелл (PowerShell/cmd/Houdini Python Shell), права (звичайний/адмін), чи має Houdini бути запущений
 - Не запускати/закривати Houdini — це робить юзер вручну
 - Не міняти прод-сцени, тільки sandbox `C:/houdini_mcp_sandbox/`
-- Зміни runtime-копії плагіна — після кожної правки робити бекап `.orig` поряд
+
+## Жорсткі правила для Claude Code
+- Перед кожною командою: машина (локальна/робоча), шелл, права, чи Houdini має бути запущений
+- Не запускати/закривати Houdini
+- Не міняти прод-сцени
+- Зміни runtime-копії плагіна — бекап `.orig` перед кожною правкою
 - `ssh pc137` — основний канал на робочу
-- VPN-IP 10.10.11.41 — допустима для зовнішнього доступу до 9876
