@@ -224,14 +224,22 @@ def create_node(ctx: Context, node_type: str, parent_path: str = "/obj", name: s
         return f"Server Error creating node: {str(e)}"
 
 @mcp.tool()
-def get_node_info(ctx: Context, path: str) -> str:
+def get_node_info(ctx: Context, path: str, max_parms: int = None, only_non_default: bool = False) -> str:
     """
     Return detailed info about a single node: type, position, color, flags,
-    up to 20 parameters with values, inputs and outputs.
+    parameters, inputs and outputs.
+    max_parms: optional cap on returned parameter entries (omit for unlimited).
+    only_non_default: if true, skip parameters that hold their template default —
+                     useful for distilling "what's actually configured" on a node.
     """
     try:
         conn = get_houdini_connection()
-        response = conn.send_command("get_node_info", {"path": path})
+        params = {"path": path}
+        if max_parms is not None:
+            params["max_parms"] = max_parms
+        if only_non_default:
+            params["only_non_default"] = True
+        response = conn.send_command("get_node_info", params)
         if response.get("status") == "error":
             origin = response.get('origin', 'houdini')
             return f"Error ({origin}): {response.get('message', 'Unknown error')}"

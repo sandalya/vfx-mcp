@@ -369,12 +369,32 @@ class HoudiniMCPServer:
             "new_value": parm.eval(),
         }
 
-    def get_node_info(self, path):
-        """Returns detailed information about a single node."""
+    def _parm_is_default(self, parm):
+        """Best-effort check if a parm currently holds its template default."""
+        try:
+            pt = parm.parmTemplate()
+            defaults = pt.defaultValue()
+            current = parm.eval()
+            if isinstance(defaults, tuple):
+                idx = parm.componentIndex()
+                if idx is not None and 0 <= idx < len(defaults):
+                    return current == defaults[idx]
+                return current == defaults
+            return current == defaults
+        except Exception:
+            return False  # if we can't tell, treat as non-default (include it)
+
+    def get_node_info(self, path, max_parms=None, only_non_default=False):
+        """
+        Returns detailed information about a single node.
+        max_parms: optional cap on returned parameter entries (None = unlimited).
+        only_non_default: if True, skip parameters that hold their template default.
+        """
         node = hou.node(path)
         if not node:
             raise ValueError(f"Node not found: {path}")
-        
+
+        all_parms = node.parms()
         node_info = {
             "name": node.name(),
             "path": node.path(),
@@ -385,15 +405,18 @@ class HoudiniMCPServer:
             "is_bypassed": node.isBypassed(),
             "is_displayed": getattr(node, "isDisplayFlagSet", lambda: None)(),
             "is_rendered": getattr(node, "isRenderFlagSet", lambda: None)(),
+            "parm_count_total": len(all_parms),
+            "parm_filter": {"max_parms": max_parms, "only_non_default": only_non_default},
             "parameters": [],
             "inputs": [],
             "outputs": []
         }
 
-        # Limit to 20 parameters for brevity
-        for i, parm in enumerate(node.parms()):
-            if i >= 20:
+        for parm in all_parms:
+            if max_parms is not None and len(node_info["parameters"]) >= max_parms:
                 break
+            if only_non_default and self._parm_is_default(parm):
+                continue
             node_info["parameters"].append({
                 "name": parm.name(),
                 "label": parm.parmTemplate().label(),
