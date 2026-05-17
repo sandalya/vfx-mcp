@@ -3,3 +3,15 @@
 __pycache__/
 *.pyc
 urls.env
+
+# Local audit / backup / shell artifacts
+*.audit*
+*.orig
+*.orig_*
+*.pre_*
+*.bak
+*.swp
+*.tmp
+
+# Windows shell mishap artifacts (mangled paths)
+C:Users*
