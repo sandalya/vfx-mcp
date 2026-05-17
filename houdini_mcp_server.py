@@ -387,7 +387,7 @@ def render_single_view(ctx: Context,
                        rotation: List[float] = [0, 90, 0],
                        render_path: str = "C:/temp/",
                        render_engine: str = "opengl",
-                       karma_engine: str = "cpu") -> Union[Image, str]:
+                       karma_engine: str = "cpu"):
     """
     Render a single view inside Houdini and return it as an inline image
     that Claude Desktop displays directly.
@@ -411,7 +411,7 @@ def render_single_view(ctx: Context,
         return f"Render failed: {str(e)}"
 
 @mcp.tool()
-def viewport_snapshot(ctx: Context, render_path: str = "C:/temp/") -> Union[Image, str]:
+def viewport_snapshot(ctx: Context, render_path: str = "C:/temp/"):
     """
     Fast OpenGL grab of the current persp viewport — use when you want to
     SHOW the user what the scene currently looks like. Equivalent to
@@ -430,7 +430,7 @@ def viewport_snapshot(ctx: Context, render_path: str = "C:/temp/") -> Union[Imag
 def render_quad_views(ctx: Context,
                       render_path: str = "C:/temp/",
                       render_engine: str = "opengl",
-                      karma_engine: str = "cpu") -> Union[List[Image], str]:
+                      karma_engine: str = "cpu"):
     """
     Render 4 canonical orthographic views (front / side / top / persp)
     and return them as inline images.
@@ -472,7 +472,7 @@ def render_specific_camera(ctx: Context,
                            camera_path: str,
                            render_path: str = "C:/temp/",
                            render_engine: str = "opengl",
-                           karma_engine: str = "cpu") -> Union[Image, str]:
+                           karma_engine: str = "cpu"):
     """
     Render from a specific camera path in the Houdini scene (e.g.
     '/cams/cam_sh110') and return as an inline image.
