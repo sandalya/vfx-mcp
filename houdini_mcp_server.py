@@ -399,21 +399,30 @@ def render_single_view(ctx: Context,
                        rotation: List[float] = [0, 90, 0],
                        render_path: str = "C:/temp/",
                        render_engine: str = "opengl",
-                       karma_engine: str = "cpu"):
+                       karma_engine: str = "cpu",
+                       renderer: str = None):
     """
-    Render a single view inside Houdini and return it as an inline image
+    Grab the current SceneViewer viewport and return it as an inline image
     that Claude Desktop displays directly.
-    Defaults render the persp view via OpenGL — fast preview.
+
+    renderer: optional Hydra renderer to switch to before grab. Accepts
+        "arnold", "karma", "karma xpu", "storm", "opengl", or the verbatim
+        plugin name. Previous renderer is restored after capture.
+        For Arnold: first call may be slow (Arnold cold-start: license
+        check + BVH build, often 10-30s); subsequent calls fast.
     """
     try:
         conn = get_houdini_connection()
-        response = conn.send_command("render_single_view", {
+        params = {
             "orthographic": orthographic,
             "rotation": rotation,
             "render_path": render_path,
             "render_engine": render_engine,
             "karma_engine": karma_engine,
-        })
+        }
+        if renderer:
+            params["renderer"] = renderer
+        response = conn.send_command("render_single_view", params)
         if response.get("status") == "error":
             return f"Error (houdini): {response.get('message', 'Unknown error')}"
         img, err = _result_to_image(response.get("result", {}))
@@ -423,12 +432,16 @@ def render_single_view(ctx: Context,
         return f"Render failed: {str(e)}"
 
 @mcp.tool()
-def viewport_snapshot(ctx: Context, render_path: str = "C:/temp/"):
+def viewport_snapshot(ctx: Context, render_path: str = "C:/temp/", renderer: str = None):
     """
-    Fast OpenGL grab of the current persp viewport — use when you want to
-    SHOW the user what the scene currently looks like. Equivalent to
-    render_single_view with defaults; named explicitly so the intent is
-    obvious in tool-use logs.
+    Grab the current SceneViewer viewport — what the user is actually
+    looking at, regardless of context (/stage, /obj, /mat).
+
+    renderer: optional Hydra renderer to use for this snapshot.
+        - None (default): use viewport's current renderer
+        - "arnold": switch to Arnold for this capture, then restore
+                    (cold-start ~10-30s the first time; cached afterwards)
+        - "karma" / "karma xpu" / "storm" / "opengl": same idea
     """
     return render_single_view(
         ctx,
@@ -436,6 +449,7 @@ def viewport_snapshot(ctx: Context, render_path: str = "C:/temp/"):
         rotation=[0, 90, 0],
         render_path=render_path,
         render_engine="opengl",
+        renderer=renderer,
     )
 
 @mcp.tool()

@@ -34,12 +34,64 @@ def _check_viewport_ready():
     return True, ""
 
 
-def viewport_flipbook(render_path=None):
+def _resolve_hydra_renderer(sv, requested):
+    """
+    Map a friendly renderer name to the actual Hydra plugin id Houdini
+    expects. Returns (resolved_name, current_name). If `requested` is None
+    or already matches a known name verbatim, returns it as-is.
+    """
+    available = []
+    try:
+        available = list(sv.hydraRenderers())
+    except Exception:
+        try:
+            available = list(sv.currentHydraRenderer.__self__.hydraRenderers())
+        except Exception:
+            pass
+
+    try:
+        current = sv.currentHydraRenderer()
+    except Exception:
+        current = None
+
+    if requested is None:
+        return None, current
+
+    # Verbatim match first (case-insensitive)
+    for name in available:
+        if name.lower() == requested.lower():
+            return name, current
+
+    # Friendly aliases
+    aliases = {
+        "arnold": ["Arnold", "HdArnoldRendererPlugin"],
+        "karma": ["Karma XPU", "Karma CPU", "HdKarmaRendererPlugin"],
+        "karma cpu": ["Karma CPU"],
+        "karma xpu": ["Karma XPU"],
+        "storm": ["Storm", "HdStormRendererPlugin"],
+        "opengl": ["Houdini GL", "Houdini VK"],
+        "houdini": ["Houdini VK", "Houdini GL"],
+    }
+    for candidate in aliases.get(requested.lower(), []):
+        for name in available:
+            if name == candidate:
+                return name, current
+
+    raise RuntimeError(
+        f"Renderer '{requested}' not found. Available in this Houdini: {available}"
+    )
+
+
+def viewport_flipbook(render_path=None, renderer=None):
     """
     Grab the current SceneViewer viewport via Houdini's flipbook API.
     Captures whatever the user is looking at — agnostic to /obj vs /stage
-    vs /mat. Replaces the old /obj-only camera-rig flow for the common
-    "show me what I see" use case.
+    vs /mat.
+
+    renderer: optional Hydra renderer name to switch to before capture.
+        Accepts friendly aliases ("arnold", "karma", "karma xpu", "storm",
+        "opengl") or the exact plugin name. None = use viewport's current
+        renderer. Previous renderer is restored after capture.
 
     Returns path to the .jpg on disk.
     """
@@ -55,20 +107,42 @@ def viewport_flipbook(render_path=None):
     sv = hou.ui.paneTabOfType(hou.paneTabType.SceneViewer)
     viewport = sv.curViewport()
 
-    timestamp = int(time.time() * 1000)
-    filepath = os.path.join(render_path, f"viewport_snapshot_{timestamp}.jpg").replace("\\", "/")
+    # Resolve and switch renderer if requested
+    target_renderer, previous_renderer = _resolve_hydra_renderer(sv, renderer)
+    switched = False
+    if target_renderer and target_renderer != previous_renderer:
+        sv.setCurrentHydraRenderer(target_renderer)
+        switched = True
+        # First-frame warmup for heavy renderers (Arnold/Karma cold-start)
+        # — small sleep lets the renderer push geometry / build BVH before
+        # flipbook samples the frame. Without this the saved JPG can be the
+        # last frame of the previous renderer.
+        time.sleep(0.5)
 
-    cur_frame = int(hou.frame())
-    settings = sv.flipbookSettings().stash()
-    settings.output(filepath)
-    settings.frameRange((cur_frame, cur_frame))
-    # leave resolution at viewport's current size — flipbook respects it
+    try:
+        timestamp = int(time.time() * 1000)
+        suffix = f"_{target_renderer.replace(' ', '')}" if target_renderer else ""
+        filepath = os.path.join(
+            render_path, f"viewport_snapshot{suffix}_{timestamp}.jpg"
+        ).replace("\\", "/")
 
-    sv.flipbook(viewport, settings)
+        cur_frame = int(hou.frame())
+        settings = sv.flipbookSettings().stash()
+        settings.output(filepath)
+        settings.frameRange((cur_frame, cur_frame))
 
-    if not os.path.exists(filepath):
-        raise RuntimeError(f"flipbook() returned but file was not written: {filepath}")
-    return filepath
+        sv.flipbook(viewport, settings)
+
+        if not os.path.exists(filepath):
+            raise RuntimeError(f"flipbook() returned but file was not written: {filepath}")
+        return filepath
+    finally:
+        # Always restore previous renderer, even if flipbook raised
+        if switched and previous_renderer:
+            try:
+                sv.setCurrentHydraRenderer(previous_renderer)
+            except Exception as e:
+                print(f"Warning: failed to restore renderer to {previous_renderer}: {e}")
 
 
 def find_displayed_geometry():
@@ -556,23 +630,22 @@ def setup_render_node(render_engine="opengl", karma_engine="cpu", render_path=No
 
 # ======== RENDERING FUNCTIONS ========
 
-def render_single_view(orthographic=False, rotation=(0, 90, 0), render_path=None, render_engine="opengl", karma_engine="cpu"):
+def render_single_view(orthographic=False, rotation=(0, 90, 0), render_path=None, render_engine="opengl", karma_engine="cpu", renderer=None):
     """
     Grab the current SceneViewer viewport. Captures what the user is looking
     at — works for /stage (LOPs/Solaris), /obj, /mat, anything.
+
+    renderer: optional hydra renderer to switch to before grab ("arnold",
+        "karma", "storm", "opengl", or the verbatim plugin name). Restored
+        after capture.
 
     Legacy params (`orthographic`, `rotation`, `render_engine`, `karma_engine`)
     are accepted for back-compat with the bridge signature but ignored. The
     flipbook respects the viewport's current camera and orientation.
 
-    Previous implementation walked /obj children, computed a bbox, created
-    /obj/MCP_CAMERA, and OpenGL-rendered through it. That was incompatible
-    with Solaris workflow — it rendered sandbox-trash in /obj instead of the
-    USD scene the user is actually working on.
-
     Returns path to the rendered .jpg on disk.
     """
-    return viewport_flipbook(render_path=render_path)
+    return viewport_flipbook(render_path=render_path, renderer=renderer)
 
 def render_quad_view(orthographic=True, render_path=None, render_engine="opengl", karma_engine="cpu"):
     """

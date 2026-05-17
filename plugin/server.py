@@ -337,10 +337,20 @@ class HoudiniMCPServer:
         node.destroy()
         return {"deleted": node_path, "name": node_name}
 
-    # Narrow, whitelisted parameter setter. Replaces broad modify_node.
-    # LOPs/Solaris uses USD-encoded names like `xn__inputsexposure_vya` — these
-    # are real parm.name() values, hash suffixes included. Add them explicitly
-    # as we hit them in real scenes; do NOT wildcard.
+    # Narrow whitelist for set_node_parameter. Two layers:
+    #   SAFE_PARMS         — exact names. Use for OBJ-level and any parm that
+    #                        needs explicit control (no pattern-matching risk).
+    #   SAFE_PARM_PATTERNS — regex prefixes for USD-encoded LOP parm families.
+    #                        Hash suffixes (`_vya`, `_jebg`, ...) may drift across
+    #                        Houdini builds or scenes, so we match by semantic
+    #                        prefix instead of enumerating every encoded name.
+    #
+    # Patterns are limited to USD attribute namespaces that contain only
+    # value-typed parms (numbers, vectors, strings used as labels — nothing
+    # callable, nothing that selects targets). Specifically excluded:
+    #   - primpattern* / primpath* — they redirect what edits hit (render-breaking)
+    #   - filepath* / file* — disk/USD references
+    #   - method / variantselection — flow control
     SAFE_PARMS = {
         # OBJ transforms
         "tx", "ty", "tz", "rx", "ry", "rz", "sx", "sy", "sz",
@@ -353,19 +363,45 @@ class HoudiniMCPServer:
         "type", "orient",
         # flags
         "display", "render",
-        # LOPs light::2.0 — USD-encoded
-        "xn__inputsexposure_vya",
-        # LOPs rendersettings — USD-encoded Arnold globals
-        "xn__arnoldglobalbucket_size_jebg",
-        "xn__arnoldglobalAA_samples_wcbg",
     }
+
+    # Compiled lazily on first set_node_parameter call (hou is only available
+    # inside Houdini, but the module gets parsed without hou too via py_compile).
+    SAFE_PARM_PATTERNS = (
+        # USD shader/light input attributes — inputs:exposure, inputs:intensity,
+        # inputs:color, inputs:radius, inputs:shaping:cone:angle, etc.
+        # All value-typed, none execute code.
+        r"^xn__inputs",
+        # USD xform ops — xformOp:translate, xformOp:rotateXYZ, xformOp:scale
+        # and their numbered variants. Value-typed vectors only.
+        r"^xn__xformOp",
+        # Arnold render globals on rendersettings — bucket_size, AA_samples,
+        # GI_diffuse_depth, etc. Performance/quality knobs, all numeric.
+        r"^xn__arnoldglobal",
+    )
+
+    _compiled_patterns = None
+
+    @classmethod
+    def _get_patterns(cls):
+        if cls._compiled_patterns is None:
+            import re
+            cls._compiled_patterns = [re.compile(p) for p in cls.SAFE_PARM_PATTERNS]
+        return cls._compiled_patterns
+
+    @classmethod
+    def _parm_allowed(cls, parm_name):
+        if parm_name in cls.SAFE_PARMS:
+            return True
+        return any(p.match(parm_name) for p in cls._get_patterns())
 
     def set_node_parameter(self, path, parm_name, value):
         """Set a single whitelisted parameter on a node."""
-        if parm_name not in self.SAFE_PARMS:
+        if not self._parm_allowed(parm_name):
             raise ValueError(
                 f"Parameter '{parm_name}' is not in the safe whitelist. "
-                f"Allowed: {sorted(self.SAFE_PARMS)}"
+                f"Exact-allowed: {sorted(self.SAFE_PARMS)}. "
+                f"Pattern-allowed prefixes: {list(self.SAFE_PARM_PATTERNS)}"
             )
         node = hou.node(path)
         if not node:
@@ -865,25 +901,26 @@ class HoudiniMCPServer:
         #         except Exception as cleanup_e:
         #             print(f"Warning: Failed to clean up temporary render file {filepath}: {cleanup_e}")
 
-    def handle_render_single_view(self, orthographic=False, rotation=(0, 90, 0), render_path=None, render_engine="opengl", karma_engine="cpu"):
+    def handle_render_single_view(self, orthographic=False, rotation=(0, 90, 0), render_path=None, render_engine="opengl", karma_engine="cpu", renderer=None):
         """Handles the 'render_single_view' command."""
         # self._check_render_lib()
-        
+
         # Use a temporary directory for the render output
         if not render_path:
             render_path = tempfile.gettempdir()
-            
+
         try:
             # Ensure rotation is a tuple
             if isinstance(rotation, list): rotation = tuple(rotation)
-            
-            print(f"Calling HoudiniMCPRender.render_single_view with rotation={rotation}, ortho={orthographic}, engine={render_engine}...")
+
+            print(f"Calling HoudiniMCPRender.render_single_view with rotation={rotation}, ortho={orthographic}, engine={render_engine}, renderer={renderer}...")
             filepath = render_single_view(
                 orthographic=orthographic,
                 rotation=rotation,
                 render_path=render_path,
                 render_engine=render_engine,
-                karma_engine=karma_engine
+                karma_engine=karma_engine,
+                renderer=renderer
             )
             print(f"render_single_view returned filepath: {filepath}")
 
