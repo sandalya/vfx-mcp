@@ -396,7 +396,7 @@ class HoudiniMCPServer:
                 break
             node_info["parameters"].append({
                 "name": parm.name(),
-                "label": parm.label(),
+                "label": parm.parmTemplate().label(),
                 "value": str(parm.eval()),
                 "raw_value": parm.rawValue(),
                 "type": parm.parmTemplate().type().name()
