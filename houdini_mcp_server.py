@@ -28,6 +28,7 @@ import json
 import socket
 import logging
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Dict, Any, List
 from contextlib import asynccontextmanager
 from mcp.server.fastmcp import FastMCP, Context
@@ -172,6 +173,64 @@ def get_project_context(ctx: Context) -> str:
             return f.read()
     except FileNotFoundError:
         return "README.md not found at " + readme_path
+
+
+# -------------------------------------------------------------------
+# Cross-agent inbox (CD -> CC handoff)
+# -------------------------------------------------------------------
+NOTES_DIR = os.path.join(script_dir, "notes")
+INBOX_PATH = os.path.join(NOTES_DIR, "cc_inbox.md")
+INBOX_CATEGORIES = {"bug", "observation", "question", "note"}
+
+@mcp.tool()
+def forward_to_cc(ctx: Context, title: str, body: str, category: str = "note") -> str:
+    """
+    Forward a structured note to the Claude Code inbox so the local-side
+    agent can pick it up across sessions. Use this whenever Claude Desktop
+    finds something worth acting on: a plugin bug, a parm pattern that
+    belongs in the SAFE_PARMS whitelist, a scene anomaly, a question that
+    needs research, a hypothesis to verify.
+
+    Writes append-only to vfx-mcp/notes/cc_inbox.md.
+
+    category: one of 'bug', 'observation', 'question', 'note' (default 'note').
+    title: short headline, 1 line.
+    body: full context — what was observed, where, suggested action if known.
+    """
+    if category not in INBOX_CATEGORIES:
+        return f"Invalid category '{category}'. Must be one of: {sorted(INBOX_CATEGORIES)}"
+    if not title or not title.strip():
+        return "Title cannot be empty."
+    if not body or not body.strip():
+        return "Body cannot be empty."
+    try:
+        os.makedirs(NOTES_DIR, exist_ok=True)
+        timestamp = datetime.now().isoformat(timespec="seconds")
+        entry = f"\n## [{category}] {title.strip()}\n_{timestamp}_\n\n{body.rstrip()}\n\n---\n"
+        with open(INBOX_PATH, "a", encoding="utf-8") as f:
+            f.write(entry)
+        return f"Forwarded to CC inbox ({category}): {title.strip()}"
+    except Exception as e:
+        logger.error(f"forward_to_cc failed: {e}", exc_info=True)
+        return f"Failed to forward: {type(e).__name__}: {e}"
+
+@mcp.tool()
+def read_cc_inbox(ctx: Context, max_chars: int = 50000) -> str:
+    """
+    Read the current CC inbox (vfx-mcp/notes/cc_inbox.md).
+    Useful to check what's already been forwarded before adding a duplicate,
+    or to remind yourself of context from earlier in the session.
+    """
+    if not os.path.exists(INBOX_PATH):
+        return "(inbox is empty)"
+    try:
+        with open(INBOX_PATH, "r", encoding="utf-8") as f:
+            content = f.read()
+        if len(content) > max_chars:
+            return content[:max_chars] + f"\n\n... (truncated; full size {len(content)} chars)"
+        return content
+    except Exception as e:
+        return f"Failed to read inbox: {type(e).__name__}: {e}"
 
 
 # -------------------------------------------------------------------
