@@ -359,11 +359,14 @@ def execute_houdini_code(ctx: Context, code: str) -> str:
 # Rendering Tools
 # -------------------------------------------------------------------
 
+_INLINE_IMAGE_FORMATS = {"png", "jpeg", "gif", "webp"}
+
 def _result_to_image(result):
     """
     Convert a single plugin _process_rendered_image dict to an MCP Image.
     Returns (image, None) on success or (None, error_str) if the dict
-    doesn't contain a usable base64 payload.
+    doesn't contain a usable base64 payload or the format isn't displayable
+    inline.
     """
     if not isinstance(result, dict):
         return None, f"Unexpected result type from plugin: {type(result).__name__}"
@@ -376,9 +379,18 @@ def _result_to_image(result):
         data = base64.b64decode(b64)
     except Exception as e:
         return None, f"Base64 decode failed: {e}"
+    # FastMCP builds mimeType as f"image/{format}"; "jpg" → "image/jpg" is
+    # not a valid MIME type and Claude Desktop rejects it. Normalize to the
+    # canonical spelling.
     fmt = (result.get("format") or "png").lower()
-    if fmt == "jpeg":
-        fmt = "jpg"
+    if fmt == "jpg":
+        fmt = "jpeg"
+    if fmt not in _INLINE_IMAGE_FORMATS:
+        return None, (
+            f"Plugin produced format '{fmt}' which MCP clients can't display inline. "
+            f"Allowed: {sorted(_INLINE_IMAGE_FORMATS)}. "
+            f"File on pc137: {result.get('filepath_on_server')}"
+        )
     return Image(data=data, format=fmt), None
 
 @mcp.tool()

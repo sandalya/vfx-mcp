@@ -828,3 +828,68 @@ For `set_node_parameter`, currently rejected parms that would be useful for audi
 (Don't add these blindly — `primpattern1` in particular can break a render if mistyped. Whitelist with judgment.)
 
 ---
+
+## [bug] viewport_snapshot повертає "unsupported image format" — bridge incorrectly encodes image response
+_2026-05-17T16:43:16_
+> resolved 2026-05-17 — CD's hypothesis #1 was correct in spirit but wrong-direction. Houdini saves `.jpg`, plugin set `format="jpg"`, my `_result_to_image` had `if fmt == "jpeg": fmt = "jpg"` — inverted mapping. FastMCP builds `image/{format}` literally, so we ended up with `image/jpg` which is not a valid MIME type (canonical is `image/jpeg`). Inverted the mapping (`jpg → jpeg`) and added a guard rejecting non-inline formats (gif/webp allowed; bmp/exr/etc explicitly rejected with a clear error mentioning the file path on pc137).
+
+## Симптом
+Виклик `houdini:viewport_snapshot()` без аргументів (дефолтний `render_path=C:/temp/`) призводить до помилки на стороні MCP-клієнта (Claude Desktop):
+
+```
+The tool returned an image in an unsupported format.
+```
+
+## Що працює
+- Плагін на pc137 СВОЮ ЧАСТИНУ виконав: файл скріншоту реально лежить у `C:/temp/` (підтвердив Саша візуально).
+- Це значить баг — НЕ у Houdini-side рендері. Баг у тому, як **bridge (`houdini_mcp_server.py`) повертає image у MCP response**.
+
+## Гіпотези (від найімовірнішої)
+1. **MIME-type mismatch**: bridge захардкодив `image/png` у `ImageContent.mimeType`, а Houdini зберіг файл як `.jpg` / `.bmp` / `.exr` / щось інше. MCP client відмовляється парсити.
+2. **Не base64-енкодить**: bridge читає файл і пхає raw bytes без base64 у `data` field. MCP protocol очікує base64 рядок.
+3. **Неправильний content block type**: повертається `text` block з шляхом замість `image` block з контентом.
+4. **Розширення файлу не співпадає з реальним форматом**: плагін зберіг наприклад `.png`, але всередині JPEG (або навпаки) — клієнт детектить magic bytes і відмовляє.
+
+## Запропонована діагностика (для CC)
+
+### Крок 1: подивитись що реально лежить у C:/temp/
+```bash
+ssh pc137 "powershell -c 'Get-ChildItem C:/temp/ -File | Sort LastWriteTime -Desc | Select -First 5 | Format-List Name,Length,Extension,LastWriteTime'"
+```
+Окремо magic bytes першого файлу:
+```bash
+ssh pc137 "powershell -c '$f=Get-ChildItem C:/temp/ -File | Sort LastWriteTime -Desc | Select -First 1; Format-Hex -Path $f.FullName -Count 16'"
+```
+
+### Крок 2: грепнути bridge — як він повертає response для viewport_snapshot
+```bash
+grep -n -B2 -A 40 "viewport_snapshot\|render_single_view\|ImageContent\|image/" houdini_mcp_server.py
+```
+Особливо шукати:
+- Чи там є `ImageContent(type="image", data=..., mimeType=...)`
+- Чи `data` обгорнутий у `base64.b64encode(...).decode()`
+- Чи `mimeType` детектиться з розширення файлу або захардкоджений
+
+### Крок 3: грепнути плагін — як він обирає формат збереження
+```bash
+grep -n -B2 -A 30 "def.*viewport_snapshot\|def.*render_single_view\|saveFrame\|saveImage" plugin/server.py
+```
+
+## Очікувана причина
+~70% імовірність — плагін зберігає `.jpg` (Houdini-дефолт для OpenGL preview через `hou.GeometryViewport.saveViewport()` або similar), а bridge каже клієнту `image/png`. MCP client (Claude Desktop) перевіряє magic bytes і відмовляє.
+
+## Запропонований фікс
+- Bridge має детектити mime з реального розширення файлу (`pathlib.Path(path).suffix` → mapping до `image/{png,jpeg,bmp,webp}`).
+- АБО: фіксовано форсити PNG на стороні плагіна (у `saveFrame()` явно вказувати `.png`-розширення).
+
+## Як я туди прийшов
+1. CD: `get_project_context` → `viewport_snapshot()` без аргументів
+2. Bridge повернув error: `The tool returned an image in an unsupported format.`
+3. Саша підтвердив що файл реально згенерований у `C:/temp/` → плагін OK → баг у транспорті.
+4. Зробив stop і запитав CC через інбокс замість дампу гіпотез у чат (CD-rule).
+
+## Пов'язане
+- Не блокує сесію — є `get_scene_info` / `get_node_info` як текстова альтернатива.
+- Але всі vision-tools (`render_single_view`, `render_quad_views`, `render_specific_camera`) ймовірно мають той самий баг — рекомендую перевірити їх після фіксу viewport_snapshot.
+
+---
