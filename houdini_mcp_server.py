@@ -27,11 +27,12 @@ print("Python path:", sys.path, file=sys.stderr)
 import json
 import socket
 import logging
+import base64
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Union
 from contextlib import asynccontextmanager
-from mcp.server.fastmcp import FastMCP, Context
+from mcp.server.fastmcp import FastMCP, Context, Image
 import asyncio
 
 
@@ -357,15 +358,40 @@ def execute_houdini_code(ctx: Context, code: str) -> str:
 # -------------------------------------------------------------------
 # Rendering Tools
 # -------------------------------------------------------------------
+
+def _result_to_image(result):
+    """
+    Convert a single plugin _process_rendered_image dict to an MCP Image.
+    Returns (image, None) on success or (None, error_str) if the dict
+    doesn't contain a usable base64 payload.
+    """
+    if not isinstance(result, dict):
+        return None, f"Unexpected result type from plugin: {type(result).__name__}"
+    if result.get("status") == "error":
+        return None, result.get("message", "render error")
+    b64 = result.get("image_base64")
+    if not b64:
+        return None, f"No image_base64 in result. Got keys: {list(result.keys())}"
+    try:
+        data = base64.b64decode(b64)
+    except Exception as e:
+        return None, f"Base64 decode failed: {e}"
+    fmt = (result.get("format") or "png").lower()
+    if fmt == "jpeg":
+        fmt = "jpg"
+    return Image(data=data, format=fmt), None
+
 @mcp.tool()
 def render_single_view(ctx: Context,
                        orthographic: bool = False,
                        rotation: List[float] = [0, 90, 0],
                        render_path: str = "C:/temp/",
                        render_engine: str = "opengl",
-                       karma_engine: str = "cpu") -> str:
+                       karma_engine: str = "cpu") -> Union[Image, str]:
     """
-    Render a single view inside Houdini and return the rendered image path.
+    Render a single view inside Houdini and return it as an inline image
+    that Claude Desktop displays directly.
+    Defaults render the persp view via OpenGL — fast preview.
     """
     try:
         conn = get_houdini_connection()
@@ -376,23 +402,38 @@ def render_single_view(ctx: Context,
             "render_engine": render_engine,
             "karma_engine": karma_engine,
         })
-
         if response.get("status") == "error":
-            origin = response.get("origin", "houdini")
-            return f"Error ({origin}): {response.get('message', 'Unknown error')}"
-
-        return response.get("result", "Render completed but no output path returned.")
+            return f"Error (houdini): {response.get('message', 'Unknown error')}"
+        img, err = _result_to_image(response.get("result", {}))
+        return img if img else f"Render produced no image: {err}"
     except Exception as e:
         logger.error(f"render_single_view failed: {e}", exc_info=True)
         return f"Render failed: {str(e)}"
 
 @mcp.tool()
+def viewport_snapshot(ctx: Context, render_path: str = "C:/temp/") -> Union[Image, str]:
+    """
+    Fast OpenGL grab of the current persp viewport — use when you want to
+    SHOW the user what the scene currently looks like. Equivalent to
+    render_single_view with defaults; named explicitly so the intent is
+    obvious in tool-use logs.
+    """
+    return render_single_view(
+        ctx,
+        orthographic=False,
+        rotation=[0, 90, 0],
+        render_path=render_path,
+        render_engine="opengl",
+    )
+
+@mcp.tool()
 def render_quad_views(ctx: Context,
                       render_path: str = "C:/temp/",
                       render_engine: str = "opengl",
-                      karma_engine: str = "cpu") -> str:
+                      karma_engine: str = "cpu") -> Union[List[Image], str]:
     """
-    Render 4 canonical views from Houdini and return the image paths.
+    Render 4 canonical orthographic views (front / side / top / persp)
+    and return them as inline images.
     """
     try:
         conn = get_houdini_connection()
@@ -401,12 +442,27 @@ def render_quad_views(ctx: Context,
             "render_engine": render_engine,
             "karma_engine": karma_engine,
         })
-
         if response.get("status") == "error":
-            origin = response.get("origin", "houdini")
-            return f"Error ({origin}): {response.get('message', 'Unknown error')}"
-
-        return response.get("result", "Render completed but no output returned.")
+            return f"Error (houdini): {response.get('message', 'Unknown error')}"
+        result = response.get("result", {})
+        if isinstance(result, dict) and result.get("status") == "error":
+            return f"Error: {result.get('message', 'render error')}"
+        items = result.get("results") if isinstance(result, dict) else None
+        if not items:
+            return f"Render produced no images. Got: {result!r}"
+        images = []
+        errors = []
+        for item in items:
+            img, err = _result_to_image(item)
+            if img:
+                images.append(img)
+            else:
+                errors.append(err)
+        if not images:
+            return f"All 4 renders failed: {errors}"
+        if errors:
+            logger.warning(f"render_quad_views: {len(errors)} of 4 failed: {errors}")
+        return images
     except Exception as e:
         logger.error(f"render_quad_views failed: {e}", exc_info=True)
         return f"Render failed: {str(e)}"
@@ -416,9 +472,10 @@ def render_specific_camera(ctx: Context,
                            camera_path: str,
                            render_path: str = "C:/temp/",
                            render_engine: str = "opengl",
-                           karma_engine: str = "cpu") -> str:
+                           karma_engine: str = "cpu") -> Union[Image, str]:
     """
-    Render from a specific camera path in the Houdini scene.
+    Render from a specific camera path in the Houdini scene (e.g.
+    '/cams/cam_sh110') and return as an inline image.
     """
     try:
         conn = get_houdini_connection()
@@ -428,12 +485,10 @@ def render_specific_camera(ctx: Context,
             "render_engine": render_engine,
             "karma_engine": karma_engine,
         })
-
         if response.get("status") == "error":
-            origin = response.get("origin", "houdini")
-            return f"Error ({origin}): {response.get('message', 'Unknown error')}"
-
-        return response.get("result", "Render completed but no output path returned.")
+            return f"Error (houdini): {response.get('message', 'Unknown error')}"
+        img, err = _result_to_image(response.get("result", {}))
+        return img if img else f"Render produced no image: {err}"
     except Exception as e:
         logger.error(f"render_specific_camera failed: {e}", exc_info=True)
         return f"Render failed: {str(e)}"

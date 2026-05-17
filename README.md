@@ -84,6 +84,7 @@ houdinimcp.start_server(host='0.0.0.0')  # для доступу ззовні
 | `render_single_view` / `render_quad_views` / `render_specific_camera` | OpenGL/Karma рендер (untested через MCP) |
 | `forward_to_cc` | Пише структуровану задачу в `notes/cc_inbox.md` для Claude Code |
 | `read_cc_inbox` | Читає inbox (для уникнення дублікатів) |
+| `viewport_snapshot` | Швидкий OpenGL-grab поточного viewport, повертає inline image |
 
 ## Файли на PC-137 (runtime)
 
@@ -149,17 +150,33 @@ houdinimcp.start_server(host='0.0.0.0')
 
 ### Claude Desktop (CD)
 
-- **На початку кожного нового чату:** виклич `get_project_context` для контексту.
-- **Не дампи знахідки в чат** — використовуй `forward_to_cc(title, body, category)` для всього що варто передати CC між сесіями. Категорії: `bug`, `observation`, `question`, `note`.
-  - Знайшов плагінний баг → `category="bug"` з repro
-  - Помітив parm-патерн який варто whitelist-нути → `category="observation"`
-  - Не зміг розібратись → `category="question"`
-- **Перед додаванням в inbox:** виклич `read_cc_inbox` щоб не дублювати.
-- **chkp-формат** (`chkp <project> "summary" "deliverables" "context"`) — структурований ticket header, CC читає як метадані. Продовжуй використовувати.
-- **Робота зі сценою:**
-  - Інспекція в `/stage` (LOPs), не `/obj` (там тільки sandbox-сміття)
-  - Для дослідження нової ноди: `get_node_info` з `only_non_default=true` — повертає тільки те що реально налаштоване
-  - Створення/правка тільки в sandbox-сценах. Не торкатись прод-сцен без явного дозволу.
+**Старт сесії:**
+- Виклич `get_project_context` як перший крок у новому чаті — отримуєш цей файл цілком.
+
+**Handoff в CC:**
+- **Не дампи знахідки в чат** — використовуй `forward_to_cc(title, body, category)`. Категорії: `bug`, `observation`, `question`, `note`.
+  - `bug` — плагін/bridge/інфра defect з repro
+  - `observation` — workflow-патерн, parm-ім'я для whitelist, аномалія сцени
+  - `question` — щось що не зміг резолвити, треба CC research
+  - `note` — будь-який handoff
+- **Перед додаванням** виклич `read_cc_inbox` щоб не дублювати.
+- **chkp-формат** (`chkp <project> "summary" "deliverables" "context"`) — структурований ticket header, продовжуй використовувати.
+
+**Інспекція сцени:**
+- **Початок:** `get_scene_info(context_filter=["stage"], max_nodes=300)` — твоя реальна робоча зона `/stage` (LOPs); `/obj` зараз містить sandbox-сміття від ранніх MCP-тестів.
+- **На кожну цікаву ноду:** `get_node_info(path, only_non_default=true)` — повертає тільки те що реально налаштоване, ігноруючи 80%+ defaults. Без цього прапора 600-parm нода (rendersettings) вб'є token budget за один виклик.
+- **Якщо `get_node_info` повертає `error` з полем `traceback`** — це конкретний плагінний баг. Зроби `forward_to_cc(category="bug", ...)` з шляхом ноди + traceback. Не пробуй обійти інакше.
+- **Великі сцени (300+ нод):** замість дампу всіх нод через MCP скажи Саші запустити `scripts/dump_scene.py` у Houdini Python Shell — це дає `stage_dump.json`+`obj_dump.json` локально на pc137, працює за секунди і не тратить токени.
+- **USD-encoded parm-імена** виду `xn__inputsexposure_vya` — це **нормально**. Solaris пише USD-атрибути з name-mangling-ом, hash-суфікси стабільні. Це не баг.
+
+**Робота з сценою:**
+- **Bypassed ноди — навмисні.** Це feature flags Саші. Не активуй їх без явного дозволу. Записуй у audit-доку.
+- **Не торкатись прод-сцен** — sandbox = `C:/houdini_mcp_sandbox/`, прод = все інше.
+- **Аналізуй один шот глибоко** + патерн-інференс для решти. Не дампи кожен шот окремо — patterns однакові, токени марно.
+
+**Vision (показати картинку):**
+- `viewport_snapshot()` — швидкий OpenGL-grab поточного viewport, повертається як inline image. Використовуй коли треба ПОКАЗАТИ Саші стан сцени.
+- `render_single_view`, `render_specific_camera`, `render_quad_views` теж повертають inline images.
 
 ### Claude Code (CC)
 
