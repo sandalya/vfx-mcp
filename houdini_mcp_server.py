@@ -337,38 +337,21 @@ def set_node_parameter(ctx: Context, node_path: str, parm_name: str, value: Any)
 @mcp.tool()
 def execute_houdini_code(ctx: Context, code: str) -> str:
     """
-    Execute arbitrary Python code in Houdini's environment.
-    NOTE: currently disabled in the plugin dispatcher for security;
-    returns "Unknown command type" until re-enabled.
+    [DISABLED BY PLUGIN HARDENING] Arbitrary Python execution inside Houdini.
+
+    The plugin dispatcher explicitly rejects 'execute_code'. Use the narrow
+    tools instead — `set_node_parameter`, `create_node`, `get_node_info`.
+    If you need a capability they don't cover, forward_to_cc a request and
+    we'll either add a narrow tool or expand SAFE_PARMS.
+
+    Returns immediately — no socket round-trip — to avoid the 4-minute
+    MCP client timeout on the disabled path.
     """
-    try:
-        conn = get_houdini_connection()
-        response = conn.send_command("execute_code", {"code": code})
-
-        if response.get("status") == "error":
-            origin = response.get('origin', 'houdini')
-            return f"Error ({origin}): {response.get('message', 'Unknown error')}"
-
-        result = response.get("result", {})
-        if result.get("executed"):
-            stdout = result.get("stdout", "").strip()
-            stderr = result.get("stderr", "").strip()
-
-            output_message = "Code executed successfully."
-            if stdout:
-                output_message += f"\n--- Stdout ---\n{stdout}"
-            if stderr:
-                output_message += f"\n--- Stderr ---\n{stderr}"
-            return output_message
-        else:
-            logger.warning(f"execute_houdini_code received success status but unexpected result format: {response}")
-            return f"Execution status unclear from Houdini response: {json.dumps(response)}"
-
-    except ConnectionError as e:
-         return f"Connection Error executing code: {str(e)}"
-    except Exception as e:
-        logger.error(f"Unexpected error in execute_houdini_code tool: {str(e)}", exc_info=True)
-        return f"Server Error executing code: {str(e)}"
+    return (
+        "execute_houdini_code is DISABLED by plugin hardening. "
+        "Use set_node_parameter / create_node / get_node_info instead. "
+        "If you need broader access, forward_to_cc a request describing the use case."
+    )
 
 
 # -------------------------------------------------------------------

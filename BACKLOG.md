@@ -24,6 +24,8 @@
 - [x] 2026-05-17 — Bugfix: defensive top-level `get_node_info` (ObjNode `isBypassed` AttributeError, plus `_safe()` wrapper for every field)
 - [x] 2026-05-17 — Plugin error responses now include `exception_type` + full `traceback` (so CD can pinpoint future NoneTypes without round-tripping through the user)
 - [x] 2026-05-17 — `scripts/dump_scene.py` (offline JSON dump of /stage and /obj — workaround for MCP token budget on big scenes)
+- [x] 2026-05-17 — Bugfix: `execute_houdini_code` short-circuits in bridge (no socket round-trip) → no more 4-min MCP timeout on the disabled path
+- [x] 2026-05-17 — SAFE_PARMS expansion: USD-encoded `xn__inputsexposure_vya`, `xn__arnoldglobalbucket_size_jebg`, `xn__arnoldglobalAA_samples_wcbg`
 
 ## TODO
 - [ ] Bridge tool `forward_to_cc(title, body)` — CD writes structured tickets to `notes/cc_inbox.md`; CC reads on demand
@@ -34,6 +36,8 @@
 - [ ] Decide fate of `execute_houdini_code` bridge tool (currently surfaces but plugin blocks)
 - [ ] Update README — currently mentions OPUS/set_material/asset_lib which were removed or never exposed (DONE 2026-05-17 in `cb121cf`)
 - [ ] BUG 2: some /stage nodes still return `'NoneType' object has no attribute 'name'` (moon, hdri, tree_decoy, NO_PROXY_TEX1/2). Defensive `get_node_info` didn't cover the root cause — investigate with new traceback field next time CD hits it.
+- [ ] Investigate `read_cc_inbox` intermittent hang reported after `execute_houdini_code` hang (2026-05-17 avp_assemble session). Hypothesis: FastMCP serialises tool calls and a previous slow tool poisons the queue. Now that `execute_houdini_code` short-circuits, this may resolve itself — re-check next session.
+- [ ] More SAFE_PARMS entries as they surface (encoded `xn__` names from light::2.0 intensity/color/coneAngle/radius; rendersettings `xn__arnoldglobalGI_*`; xform `t/r/s`). Add incrementally from real scenes, not from speculation.
 - [ ] Token-budget tools for big scenes:
   - `get_node_parm_names_only(path)` — list non-default parm names without values
   - `include_raw=False` flag on `get_node_info` — drop `raw_value` to save tokens

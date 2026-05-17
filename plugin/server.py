@@ -338,8 +338,11 @@ class HoudiniMCPServer:
         return {"deleted": node_path, "name": node_name}
 
     # Narrow, whitelisted parameter setter. Replaces broad modify_node.
+    # LOPs/Solaris uses USD-encoded names like `xn__inputsexposure_vya` — these
+    # are real parm.name() values, hash suffixes included. Add them explicitly
+    # as we hit them in real scenes; do NOT wildcard.
     SAFE_PARMS = {
-        # transforms
+        # OBJ transforms
         "tx", "ty", "tz", "rx", "ry", "rz", "sx", "sy", "sz",
         "scale", "uniform_scale",
         "px", "py", "pz",
@@ -350,6 +353,11 @@ class HoudiniMCPServer:
         "type", "orient",
         # flags
         "display", "render",
+        # LOPs light::2.0 — USD-encoded
+        "xn__inputsexposure_vya",
+        # LOPs rendersettings — USD-encoded Arnold globals
+        "xn__arnoldglobalbucket_size_jebg",
+        "xn__arnoldglobalAA_samples_wcbg",
     }
 
     def set_node_parameter(self, path, parm_name, value):

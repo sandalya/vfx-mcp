@@ -472,3 +472,359 @@ get_scene_info(max_nodes=5000) повернув 332 топ-level /stage ноди
 Python скрипт що працює напряму в hou.session, оминає всі MCP обмеження. Зафорвардив у Part 2/2 аудиту. Дає JSON для /stage і /obj за ~30 секунд.
 
 ---
+
+## [observation] [avp_assemble] Scene audit — Part 1/3: META + topology
+_2026-05-17T16:18:04_
+> consumed 2026-05-17 — vocabulary absorbed (rolling-shutter cameras, ~150 light::2.0 count, fetch/timeshift/Light_Blocker types). Anti-patterns recorded; cleanup is Sashok's call, not infra TODO.
+
+# Scene audit: avp_assemble.hip (1/3)
+
+## META
+- **File**: `C:/houdini_mcp_sandbox/avp_assemble.hip`
+- **Project**: AvP (Alien vs Predator) — sequence sq010
+- **Shots**: sh270, sh280, sh290, sh300, sh310 (+ sh291 secondary import)
+- **Frame range**: 1001-1080 @ 24fps
+- **Renderer**: Arnold (htoa)
+- **Color**: ACEScg (linear family ACES)
+- **Resolution baseline**: 1920×1920 (square — VR/dome? worth verifying)
+- **Total nodes**: 28,156 (most inside subnetworks/HDAs)
+- **Top-level /stage**: ~620 nodes
+- **Top-level /obj**: 7 nodes (5 cams + 2 geo: paper, glass)
+- **Storage paths**: `//loky.plarium.local/project/_pl/raid_ap/cinematic/sq010/`
+- **Studio**: Plarium (ftrack pipeline — `$FTRACK_ROOT_PATH`, `$FTRACK_STUDIO_PATH`)
+
+## High-level topology (per-shot pattern)
+Each shot has parallel pipelines, fed from `pl_usd_import → pl_shot_merge1`:
+
+```
+pl_usd_import (sh270/280/290/300/310)
+    → pl_shot_merge1 → pl_shot_mark (per-shot)
+        → variants (setvariant: chars_normal_tex, chars_proxy_tex, env_texture_*, capsule_damaged, ...)
+        → prune stacks (deactivate-based, primpattern-driven)
+        → rendergeometrysettings (matte/AOV/subdiv per pass)
+        → lights (light::2.0, ~150+ instances) + editproperties + lightlinker
+        → pl_aovs → rendersettings → pl_render (Arnold pass)
+        → pl_renderfarm (job submission HDA)
+```
+
+## Node-type inventory (top-level /stage, ~620 nodes)
+Counted from get_scene_info:
+
+| Type                          | Count | Role                                          |
+|-------------------------------|-------|-----------------------------------------------|
+| `light::2.0`                  | ~150+ | All lighting (incl. evac/screen/capsule sets) |
+| `prune`                       | ~85   | Per-pass selective enabling                   |
+| `pl_render`                   | ~30   | Render-pass HDAs (bg/fg/main/atmo/sparks/etc) |
+| `rendersettings`              | ~35   | Per-pass Arnold settings                      |
+| `rendergeometrysettings`      | ~20   | Matte/subdiv/AOV per geo                      |
+| `pl_aovs`                     | ~30   | AOV setup per pass                            |
+| `editproperties`              | ~40   | Feature flags (no_emision, walls_emission_off, etc.) |
+| `pl_renderfarm`               | ~14   | Farm submission                               |
+| `setvariant`                  | ~15   | Variant switching (proxy/normal/damaged)      |
+| `pl_shot_mark` / `pl_shot_edit` | ~15 | Shot boundary markers                         |
+| `sublayer`                    | ~10   | Lookdev/asset layer injection                 |
+| `sopcreate` (`grid*`, `cube*`)| ~14   | Light blockers (manual geo)                   |
+| `Light_Blocker::12`           | 8     | HDA-based blockers                            |
+| `materiallibrary` / `assignmaterial` | ~20 | Material assignments                      |
+| `pl_usd_import`               | 6     | Shot USD imports                              |
+| `pl_shot_output` / `pl_usd_rop` | 3   | USD output / assembly                         |
+| `instancer` (GLASS*)          | 4     | Glass shatter instancers per shot             |
+| `loky_*` HDAs                 | ~12   | Studio HDAs (ImportGeo, saveComponent, ArnoldlightFilter, XeroxSolarisModify, saveUsd, ImportVolume) |
+| `fetch`                       | 16    | Cross-network references                      |
+| `timeshift`                   | 7     | Time-offsetting (evac lights animation)       |
+| `reference::2.0`              | ~8    | USD references (matte payloads, glass, fog)   |
+| `null`                        | ~15   | Network navigation markers (SH*_SHOT_OUT, OUT_FOR_GLASS_*, FAST_PREVIEW, IN, OUT) |
+
+## /obj contents (working)
+- `/obj/sh270_cam` ... `/obj/sh310_cam` — 5 shot cameras (resolution 1920×1920, focal 40mm, shutter 0.4, custom rolling shutter ramp)
+- `/obj/paper` (geo)
+- `/obj/glass` (geo)
+
+Cameras have keyframed transforms (bezier()). Arnold rolling-shutter expressions: `ar_rolling_shutter_duration = 1/1080`, `ar_mb_shutter_length = ch("shutter")`, custom 4-point shutter ramp.
+
+Continued in Part 2/3 (patterns + per-category diff).
+
+---
+
+## [observation] [avp_assemble] Scene audit — Part 2/3: patterns + diff samples
+_2026-05-17T16:19:21_
+> consumed 2026-05-17 — concrete USD-encoded parm names captured. 3 added to SAFE_PARMS (see resolution on bug entry below).
+
+# Scene audit: avp_assemble.hip (2/3) — Patterns + Diff
+
+## Key configured values (samples)
+
+### rendersettings (Arnold) — beauty pass baseline
+Verified from `/stage/rendersettings1` (516 parm slots, ~70 non-default):
+- `AA_samples = 7` (override)
+- `bucket_size = 32` (override; default 64 — **smaller buckets = faster final tile but more overhead**)
+- `enable_progressive_render = on` (overridden)
+- `auto_generate_tx = off` (overridden — assumes pre-generated .tx)
+- `AA_seed = $F` (per-frame seed — denoise-friendly)
+- Color: `ACEScg` (linear) / `ACES` family
+- Resolution: 1920×N where N = `computeResolutionParameter(True, False)` (auto-aspect from camera)
+- Data window NDC: `[-0.003, -0.003, 1.003, 1.003]` (slight overscan)
+- Arnold report/stats/profile paths all set to `$HIP/arnold_*.{html,json}` — overwritten per-render, **not per-shot/pass**. Could collide across simultaneous farm jobs.
+
+### light::2.0 (e.g. `char_key`) — typical setup
+- `lighttype = UsdLuxDiskLight`
+- `lookatenable = on` with explicit lookatpos (so transforms make sense)
+- `exposure = 1.72` (positive, stop-based)
+- `primvars:arnold:aov = "char_key"` — **AOV light group per-light is the pattern**. Light groups will be exposed in the comp as separate AOVs.
+- `arnoldaov_control = set` (override flag pattern — every Arnold-specific override has a sister `*_control` parm; CC must replicate this whitelist when scripting)
+
+### rendergeometrysettings (e.g. `all_matte`) — matte pass
+- `primpattern = /chars/* /env/* /props/*`
+- `primvars:arnold:matte = on` (override)
+- Used to flip the whole scene to matte for holdouts.
+
+### pl_render (HDA wrapper) — render submission
+Per-shot frame ranges (verified from `bg_270`):
+- sh270 bg: 1001-1021 (20 frames)
+- All cameras explicitly overridden: `override_camera = /cams/cam_sh270` etc.
+- Path template: `$FTRACK_STUDIO_PATH/raid_ap/cinematic/sq010/<shot>/render/<name>/v<NNN>`
+- `pl_version = 13`, `node_version = 1.2.1`
+- `advanced_cryptomatte = on` everywhere
+
+### prune (selective-enabling stack)
+Two variants found:
+1. **`prune` (default behavior)** — `method=deactivate`, `primpattern` lists explicit USD prim paths. E.g. `prune_invis_lights` deactivates 32 light prims (`/lights/lght_evac_*`, `/lights/light_aqr_sign_*`, `/lights/sky_blck_*`).
+2. **`UN-prune` pattern** — `arbiter_hair_UNprune`: `prune = 0` + `primpattern = /chars/arbiter_space_suit/geo/hair`. Re-activates a previously pruned prim. Used as compositional override.
+
+### Camera (/obj/*_cam)
+- Square 1920×1920, focal 40, near 0.02
+- Shutter 0.4 s, rolling-shutter duration 1/1080 (per-line, 1080 lines @ shutter speed)
+- Custom 4-point shutter curve ramp (trapezoidal: 0→1 over 10%, hold, 1→0 over last 10%) — non-default trapezoid for realistic motion blur
+
+---
+
+## Anti-patterns / red flags
+
+### 1. Massive rendersettings duplication (~35 instances)
+`rendersettings1` through `rendersettings31` + `WIP/WIP1..8`, `draft23/24`. Some have ad-hoc names like `WIP`, `WIP1..8`, `draft23`, `draft24`, `rendersettings_edit11`. **Heuristic:** these were forked per-pass instead of inherited from a single base. CC should consider consolidating to a master + override-style children if scaling further. NOT auto-touching — confirm with Sashok first.
+
+### 2. AOV nodes hanging unattached
+`pl_aovs8` is **bypassed** AND has no inputs/outputs (`inputs: []`, `outputs: []`). Likely orphaned from refactor. Several `pl_aovs*` nodes (8..41) — check if all wired. Sample candidates for cleanup.
+
+### 3. Naming drift
+Notable mid-stack names:
+- `prune_scattqer1` — typo for `prune_scatter` (already present elsewhere)
+- `prune_zheka_scatter_off` — personal name ("zheka") in node label → bad for handoff
+- `glass_on_the_floor` (prune) — works but ad-hoc
+- `TEMP_PRUNE` — leftover temp marker
+- `arbiter_hair_UNprune` vs `arbiter_hair_prune` — sibling naming OK, but UPPERCASE inconsistent
+- Multiple `empty_light*` (5 nodes) — purpose unclear without inspection
+- `sparks_ffg_270` — likely typo for `sparks_fg_270`
+
+### 4. WIP / draft nodes in production graph
+9 `WIP*` and 2 `draft*` rendersettings nodes are wired in. Need to confirm with Sashok whether these are deliberate "feature flags" or stale forks. NOT bypassed → they may be active for some pl_render outputs.
+
+### 5. Many `editproperties` stacked feature-flag style
+~12 instances of `no_emision*`, `walls_emission_off*`, `sparks_geolight_increase*`, `edit_standard_surface*`. Pattern: localized material/property overrides per pass. These ARE the legitimate per-pass override pattern in Solaris — flag if any are bypassed and forgotten.
+
+### 6. Light count is high
+~150+ `light::2.0` nodes at /stage top level. Many follow `light_screen_*` (17 letters A..O), `light_capsule_*` (~15), `lght_evac_*` (~25), `light_up_table_p*` (~25), `light_GI_*` family, etc. Most likely necessary (full set lighting), but Light_Blocker stack (8 blockers + 5 grid/cube SOPs for blocker geo) is sizeable — verify all are referenced from at least one lightlinker.
+
+### 7. `lightlinker` nodes (8 instances): lightlinker1..8
+Each one defines which lights affect which prims. With 150+ lights and 8 linkers, hard to audit by eye — flag as a domain for a dedicated audit if any pass renders wrong.
+
+### 8. Arnold report file collision risk
+All 35 rendersettings nodes likely write to `$HIP/arnold_report.html`, `$HIP/arnold_stats.json`, `$HIP/arnold_profile.json`. Concurrent farm renders WILL overwrite each other's stats. Worth parameterizing per-pass.
+
+---
+
+## Bypassed inventory (sampled)
+Only `pl_aovs8` confirmed bypassed in the sampling pass. **Full bypass scan requires the Python dump (Part 3).** Per Sashok's rule: bypassed nodes are NOT activated; documented only.
+
+## Open questions (need Sashok input)
+1. **WIP / draft / WIP1..8 rendersettings** — feature flags or stale forks? OK to consolidate?
+2. **1920×1920** square camera resolution — VR? Crop? Intentional?
+3. **`pl_aovs8`** and other orphan AOV nodes — confirmed dead?
+4. **Arnold report path collision** — parameterize per-pass or acceptable?
+5. **`prune_scattqer1` / `prune_zheka_scatter_off` / `TEMP_PRUNE`** — safe to rename for handoff?
+6. **`empty_light` × 5** — placeholder lights or unused?
+
+Continued in Part 3/3 (Python dump script + recommended next step + plugin bug report).
+
+---
+
+## [observation] [avp_assemble] Scene audit — Part 3/3: dump script + next steps
+_2026-05-17T16:20:13_
+> consumed 2026-05-17 — improved dump script noted; the earlier `scripts/dump_scene.py` covers the same shape, keeping single canonical version. If we hit cases where the v2 features (`comment`, `has_keyframes`, parm-tuple aware default detection) matter, will fork.
+
+# Scene audit: avp_assemble.hip (3/3) — Dump script + recommendations
+
+## Python dump script (run in Houdini Python Shell)
+
+This produces the FULL diff (all top-level /stage + /obj nodes, only non-default parms, with raw expressions). Sashok runs this once in the live session — output is `C:/houdini_mcp_sandbox/avp_assemble_dump.json`.
+
+```python
+import hou, json, os
+
+OUT = "C:/houdini_mcp_sandbox/avp_assemble_dump.json"
+CONTEXTS = ["/stage", "/obj"]
+
+def serialize_value(v):
+    """Best-effort JSON-safe value."""
+    if v is None or isinstance(v, (bool, int, float, str)):
+        return v
+    if isinstance(v, (tuple, list)):
+        return [serialize_value(x) for x in v]
+    return repr(v)
+
+def parm_diff(parm):
+    """Return (value, raw, type) only if non-default; None otherwise."""
+    try:
+        tpl = parm.parmTemplate()
+        default_vals = tpl.defaultValue() if hasattr(tpl, "defaultValue") else None
+        cur = parm.eval()
+        raw = parm.rawValue() if hasattr(parm, "rawValue") else parm.unexpandedString() if hasattr(parm, "unexpandedString") else str(cur)
+        # Compare against default; if default is tuple, take element 0
+        default = default_vals[0] if isinstance(default_vals, (tuple, list)) and default_vals else default_vals
+        is_default = (cur == default) and (str(raw) == str(default))
+        # Always include expressions even if they evaluate to default
+        has_expr = parm.keyframes() or (raw and str(raw) != str(cur))
+        if is_default and not has_expr:
+            return None
+        return {
+            "value": serialize_value(cur),
+            "raw": str(raw) if raw is not None else None,
+            "type": tpl.type().name() if tpl else "Unknown",
+            "has_keyframes": bool(parm.keyframes()),
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+def node_dump(node):
+    parms = {}
+    for p in node.parms():
+        d = parm_diff(p)
+        if d is not None:
+            parms[p.name()] = d
+    inputs = [(c.name(), c.path(), c.type().name()) for c in node.inputs() if c]
+    outputs = [(c.name(), c.path(), c.type().name()) for c in node.outputs() if c]
+    return {
+        "path": node.path(),
+        "type": node.type().name(),
+        "is_bypassed": node.isBypassed() if hasattr(node, "isBypassed") else None,
+        "is_displayed": node.isDisplayFlagSet() if hasattr(node, "isDisplayFlagSet") else None,
+        "color": list(node.color().rgb()) if hasattr(node, "color") else None,
+        "position": list(node.position()) if hasattr(node, "position") else None,
+        "comment": node.comment() if hasattr(node, "comment") else "",
+        "parms": parms,
+        "inputs": inputs,
+        "outputs": outputs,
+    }
+
+result = {"file": hou.hipFile.path(), "contexts": {}}
+for ctx_path in CONTEXTS:
+    ctx = hou.node(ctx_path)
+    if not ctx:
+        result["contexts"][ctx_path] = {"error": "not found"}
+        continue
+    nodes = ctx.children()  # top-level only; recurse manually if needed
+    result["contexts"][ctx_path] = {n.name(): node_dump(n) for n in nodes}
+
+with open(OUT, "w", encoding="utf-8") as f:
+    json.dump(result, f, indent=2, ensure_ascii=False)
+
+print("Dumped {} nodes to {}".format(
+    sum(len(v) for v in result["contexts"].values() if isinstance(v, dict) and "error" not in v),
+    OUT
+))
+```
+
+### Notes on the script
+- Top-level only by default. To recurse into HDAs/subnetworks, replace `ctx.children()` with `ctx.allSubChildren()` — but this will balloon to ~28K nodes; do it only for targeted subtrees.
+- "Default" detection is heuristic — Houdini parm templates don't always expose the per-Arnold-override `_control` pair cleanly. The `has_expr` fallback ensures we never lose expressions.
+- For a deep dive of one subnetwork only, pass it as a CONTEXT (e.g. `/stage/pl_renderfarm2`).
+
+## Recommended next step for CC
+
+**Priority order:**
+1. **Run the dump** (Sashok, manually in Houdini) → `avp_assemble_dump.json`
+2. **Answer the 6 open questions in Part 2** so cleanup scope is bounded
+3. **If consolidation is approved**: CC can read the JSON, group rendersettings by overrides, propose a merged hierarchy
+4. **If just for handoff archive**: JSON + the 3-part Markdown audit is the deliverable
+5. **Light audit**: separate sub-task — generate a CSV of (light, exposure, type, AOV group, lightlinker membership) for a sanity pass
+
+## Plugin bug report (separate forward — see bug category)
+- `execute_houdini_code` — disabled in dispatcher but hangs for 4 minutes before timing out instead of returning a quick "Unknown command type"
+- `read_cc_inbox` — also hung 4 minutes during this session (intermittent; subsequent `get_node_info` calls worked fine, so plugin recovered)
+
+---
+
+## Files for CC to consume
+- `cc_inbox.md` — these 3 parts
+- (after dump) `C:/houdini_mcp_sandbox/avp_assemble_dump.json` — full structured diff
+
+## What was NOT done (and why)
+- ❌ Recursed into 28K internal nodes — too noisy; covered by dump script if needed
+- ❌ Touched `/obj` write operations — only read (plugin appears stable on /obj reads anyway, contrary to earlier session notes)
+- ❌ Activated bypassed nodes — per Sashok's rule (audit only)
+- ❌ Light-linker membership graph — large enough to be its own task
+
+---
+
+## [bug] [mcp-plugin] Two tools hang 4 min on disabled/error path
+_2026-05-17T16:21:19_
+> BUG 1 (`execute_houdini_code` 4-min hang) resolved 2026-05-17 — bridge wrapper now short-circuits and returns immediately, no socket round-trip. The disabled-path message instructs CD to use narrow tools or forward_to_cc a request.
+> BUG 2 (`read_cc_inbox` intermittent hang) open — hypothesis: it was tail-blocked by BUG 1. Now that BUG 1 returns fast, this should not recur. Will revisit if seen again. Tracked in BACKLOG.
+> SAFE_PARMS suggestions: 3 added (light `xn__inputsexposure_vya`, Arnold globals `xn__arnoldglobalbucket_size_jebg`, `xn__arnoldglobalAA_samples_wcbg`). NOT added: `is_bypassed` (node flag, not parm — would need separate `set_node_flag` tool); `primpattern1` (dangerous per CD's own note). Tracked in BACKLOG to add more `xn__*` parms as real scenes surface them.
+
+# Plugin bugs found during avp_assemble audit session
+
+## Bug 1: `execute_houdini_code` hangs 4 min instead of fast-fail
+
+**Tool**: `houdini:execute_houdini_code`
+**Tool description claims**: "currently disabled in the plugin dispatcher for security; returns 'Unknown command type'"
+**Actual behavior**: hangs for ~4 minutes, then MCP client returns "No result received from the Claude Desktop app after waiting 4 minutes"
+
+**Repro**:
+```python
+houdini:execute_houdini_code(code="print('ping')")
+```
+
+**Expected**: immediate error response "Unknown command type" (or a clear "disabled" message)
+**Actual**: 4-minute hang, then client-side timeout
+
+**Suspected fix**:
+- In the plugin dispatcher, check the command type FIRST and return early with the "Unknown command type" / "disabled" payload synchronously
+- If the dispatcher is fine, then the issue is on the server-side handler — there's probably no handler registered for this command, so the request hits a wait-loop / unawaited future
+
+**Impact**: medium — wastes 4 min of session time per invocation, also confuses Claude/CC into thinking the plugin is dead
+
+---
+
+## Bug 2: `read_cc_inbox` intermittent 4-min hang
+
+**Tool**: `houdini:read_cc_inbox`
+**Behavior**: in this session it timed out at exactly 4 minutes, identical signature to Bug 1
+**Context**: it was called RIGHT AFTER `execute_houdini_code` had its 4-min hang. The next `get_node_info` (on /stage/sh270) worked fine.
+
+**Hypothesis**: the previous `execute_houdini_code` hang left the dispatcher in a bad state for one more request. Could be:
+- (a) lingering future / event-loop block carrying over
+- (b) the inbox file lock held by something
+- (c) plugin state machine got desynced after the disabled-command timeout
+
+**Repro suggestion**: try to reproduce by calling `execute_houdini_code` first, then `read_cc_inbox` immediately. If it consistently reproduces, the link is real.
+
+**Impact**: low-medium — non-deterministic; subsequent calls worked.
+
+---
+
+## Notes
+- All other tools used in this session worked cleanly: `get_scene_info` (5000 max_nodes), `get_node_info` × 5 (rendersettings, prune, light::2.0, pl_render, rendergeometrysettings, pl_aovs, prune-UN), `forward_to_cc` × 3
+- `/obj` read works fine (sh270_cam returned 124 parms, 25 non-default). Earlier session note about `/obj` being a plugin bug may have been incorrect OR may apply only to specific node types (not `cam`)
+
+## Suggested SAFE_PARMS whitelist additions (from this session)
+For `set_node_parameter`, currently rejected parms that would be useful for audit-driven tweaks:
+- `is_bypassed` (read-only via flag, but write would help disabling stale forks)
+- `xn__inputsexposure_vya` (light exposure — Arnold light)
+- `xn__arnoldglobalbucket_size_jebg` (Arnold bucket size — non-trivial perf knob)
+- `xn__arnoldglobalAA_samples_wcbg` (AA samples)
+- `primpattern1` (prune pattern — but DANGEROUS, only with explicit per-call OK)
+
+(Don't add these blindly — `primpattern1` in particular can break a render if mistyped. Whitelist with judgment.)
+
+---
