@@ -893,3 +893,64 @@ grep -n -B2 -A 30 "def.*viewport_snapshot\|def.*render_single_view\|saveFrame\|s
 - Але всі vision-tools (`render_single_view`, `render_quad_views`, `render_specific_camera`) ймовірно мають той самий баг — рекомендую перевірити їх після фіксу viewport_snapshot.
 
 ---
+
+## [bug] viewport_snapshot падає з OpenGL 3.3 fatal коли viewport у manual mode
+_2026-05-17T17:07:05_
+> resolved (precheck + flipbook rewrite) — added `_check_viewport_ready()` in `plugin/HoudiniMCPRender.py` that catches both "no SceneViewer pane" and "manual update mode" cases, returning a clear actionable error before the socket hangs on the OpenGL fatal dialog. While in that file, also rewrote `render_single_view` to use Houdini's flipbook API instead of the old /obj-only camera-rig flow — `viewport_snapshot` now captures whatever the user is actually looking at (works for /stage Solaris, /obj, anywhere). The other render tools (quad/specific_camera) still use the /obj flow and remain effectively useless for LOPs work; will rework when the use case appears.
+
+## Що спостерігалось
+
+Сесія сьогодні: `viewport_snapshot` (і `render_single_view` через нього) повертав `Timeout receiving data from Houdini`. Паралельно в Houdini випливав діалог:
+
+> OpenGL Fatal Error: The installed OpenGL driver is not able to run OpenGL 3.3.
+> Please update the driver and check the minimum system requirements for Houdini.
+
+Спочатку списали на RDP / Microsoft Remote Display Adapter (dxdiag показав `rdpidd.dll` як Main Driver). Але причина виявилась інша.
+
+## Root cause
+
+Viewport був переведений у **manual update mode** (Display Options → Update → Manual). У цьому режимі Houdini не активує OpenGL контекст для viewport, і коли плагін намагається зробити OpenGL grab — драйверний шар повертає fatal "OpenGL 3.3 not available", бо контексту просто немає.
+
+Перевірено: після перемикання viewport назад у `auto` — `viewport_snapshot` одразу спрацював коректно (повернув очікувану сферу з кубом).
+
+## Чому це проблема
+
+1. Помилка вводить в оману — виглядає як драйверна / RDP-проблема, хоча насправді це стан UI.
+2. На стороні MCP-клієнта це проявляється як `Timeout receiving data from Houdini` — без жодного натяку на справжню причину.
+3. У RDP/Parsec сесіях легко переплутати з реальним OpenGL 3.3 обмеженням.
+
+## Запропоноване рішення
+
+В `viewport_snapshot` (і `render_single_view`) додати pre-check на стані viewport перед grab:
+
+```python
+# псевдокод
+sv = get_scene_viewer()  # hou.ui.paneTabOfType(hou.paneTabType.SceneViewer) або через viewport
+viewport = sv.curViewport()
+settings = viewport.settings()
+# або через sv.setSceneGraphTreeUpdate / update mode API
+if update_mode == hou.updateMode.Manual:
+    # варіант A: повернути explicit error
+    return {"error": "Viewport is in manual update mode — switch to Auto Update or call hou.setUpdateMode(hou.updateMode.AutoUpdate) before snapshot"}
+    # варіант B: тимчасово перемкнути → grab → повернути назад
+```
+
+Варіант A простіший і безпечніший (нічого не міняємо в стані сцени користувача). Варіант B зручніший, але треба гарантувати відновлення стану навіть при exception.
+
+Перевагу віддав би **A** — explicit error з зрозумілим текстом краще, ніж мовчазна підміна стану.
+
+## Контекст
+
+- OS: Windows 11, RDP-сесія
+- Houdini: (поточна версія користувача, перевірити через `hou.applicationVersion()`)
+- Плагін: houdini-mcp, поточна гілка
+- Файл сцени: тестова з одною сферою
+
+## Suggested action
+
+1. Додати helper `_check_viewport_ready()` у плагіні, який повертає (`ok: bool`, `reason: str`).
+2. Викликати його на початку `viewport_snapshot`, `render_single_view`, `render_quad_views`, `render_specific_camera`.
+3. При `ok=False` повертати структуровану помилку через socket замість того, щоб давати Houdini тригернути fatal діалог і потім таймаутитись.
+4. Опціонально: задокументувати в README обмеження "viewport must be in Auto Update mode".
+
+---
