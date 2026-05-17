@@ -384,6 +384,40 @@ class HoudiniMCPServer:
         except Exception:
             return False  # if we can't tell, treat as non-default (include it)
 
+    def _serialize_parm(self, parm):
+        """Serialize a single parm defensively; never raises."""
+        try:
+            pt = parm.parmTemplate()
+            ptype = pt.type().name() if (pt and pt.type()) else "unknown"
+            label = pt.label() if pt else parm.name()
+            return {
+                "name": parm.name(),
+                "label": label,
+                "value": str(parm.eval()),
+                "raw_value": parm.rawValue(),
+                "type": ptype,
+            }
+        except Exception as e:
+            try:
+                n = parm.name()
+            except Exception:
+                n = "<unknown>"
+            return {"name": n, "error": f"{type(e).__name__}: {e}"}
+
+    def _serialize_node_ref(self, node):
+        """Serialize an input/output node reference defensively. Returns None if node is None."""
+        if node is None:
+            return None
+        try:
+            t = node.type()
+            return {
+                "name": node.name(),
+                "path": node.path(),
+                "type": t.name() if t else "unknown",
+            }
+        except Exception as e:
+            return {"error": f"{type(e).__name__}: {e}"}
+
     def get_node_info(self, path, max_parms=None, only_non_default=False):
         """
         Returns detailed information about a single node.
@@ -398,8 +432,8 @@ class HoudiniMCPServer:
         node_info = {
             "name": node.name(),
             "path": node.path(),
-            "type": node.type().name(),
-            "category": node.type().category().name(),
+            "type": node.type().name() if node.type() else "unknown",
+            "category": node.type().category().name() if (node.type() and node.type().category()) else "unknown",
             "position": [node.position()[0], node.position()[1]],
             "color": list(node.color().rgb()) if node.color() else None,
             "is_bypassed": node.isBypassed(),
@@ -415,36 +449,41 @@ class HoudiniMCPServer:
         for parm in all_parms:
             if max_parms is not None and len(node_info["parameters"]) >= max_parms:
                 break
-            if only_non_default and self._parm_is_default(parm):
-                continue
-            node_info["parameters"].append({
-                "name": parm.name(),
-                "label": parm.parmTemplate().label(),
-                "value": str(parm.eval()),
-                "raw_value": parm.rawValue(),
-                "type": parm.parmTemplate().type().name()
-            })
+            try:
+                if only_non_default and self._parm_is_default(parm):
+                    continue
+            except Exception:
+                pass  # if default-check itself fails, include the parm
+            node_info["parameters"].append(self._serialize_parm(parm))
 
-        # Inputs
-        for i, in_node in enumerate(node.inputs()):
-            if in_node:
-                node_info["inputs"].append({
-                    "index": i,
-                    "name": in_node.name(),
-                    "path": in_node.path(),
-                    "type": in_node.type().name()
-                })
+        # Inputs — defensively skip None / unresolvable refs
+        try:
+            for i, in_node in enumerate(node.inputs()):
+                ref = self._serialize_node_ref(in_node)
+                if ref is not None:
+                    ref["index"] = i
+                    node_info["inputs"].append(ref)
+        except Exception as e:
+            node_info["inputs_error"] = f"{type(e).__name__}: {e}"
 
-        # Outputs
-        for i, out_conn in enumerate(node.outputConnections()):
-            out_node = out_conn.outputNode()
-            node_info["outputs"].append({
-                "index": i,
-                "name": out_node.name(),
-                "path": out_node.path(),
-                "type": out_node.type().name(),
-                "input_index": out_conn.inputIndex()
-            })
+        # Outputs — outputConnections can yield connections whose outputNode() is None for some LOP types
+        try:
+            for i, out_conn in enumerate(node.outputConnections()):
+                try:
+                    out_node = out_conn.outputNode()
+                    ref = self._serialize_node_ref(out_node)
+                    if ref is None:
+                        continue
+                    ref["index"] = i
+                    try:
+                        ref["input_index"] = out_conn.inputIndex()
+                    except Exception:
+                        pass
+                    node_info["outputs"].append(ref)
+                except Exception as e:
+                    node_info["outputs"].append({"index": i, "error": f"{type(e).__name__}: {e}"})
+        except Exception as e:
+            node_info["outputs_error"] = f"{type(e).__name__}: {e}"
 
         return node_info
 
