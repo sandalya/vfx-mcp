@@ -157,7 +157,12 @@ class HoudiniMCPServer:
         except Exception as e:
             print(f"Error executing command: {str(e)}")
             traceback.print_exc()
-            return {"status": "error", "message": str(e)}
+            return {
+                "status": "error",
+                "message": str(e),
+                "exception_type": type(e).__name__,
+                "traceback": traceback.format_exc(),
+            }
 
     def _execute_command_internal(self, command):
         """
@@ -429,16 +434,24 @@ class HoudiniMCPServer:
             raise ValueError(f"Node not found: {path}")
 
         all_parms = node.parms()
+
+        def _safe(getter, default=None):
+            try:
+                v = getter()
+                return v
+            except Exception:
+                return default
+
         node_info = {
-            "name": node.name(),
-            "path": node.path(),
-            "type": node.type().name() if node.type() else "unknown",
-            "category": node.type().category().name() if (node.type() and node.type().category()) else "unknown",
-            "position": [node.position()[0], node.position()[1]],
-            "color": list(node.color().rgb()) if node.color() else None,
-            "is_bypassed": node.isBypassed(),
-            "is_displayed": getattr(node, "isDisplayFlagSet", lambda: None)(),
-            "is_rendered": getattr(node, "isRenderFlagSet", lambda: None)(),
+            "name": _safe(node.name, "<unknown>"),
+            "path": _safe(node.path, path),
+            "type": _safe(lambda: node.type().name(), "unknown"),
+            "category": _safe(lambda: node.type().category().name(), "unknown"),
+            "position": _safe(lambda: [node.position()[0], node.position()[1]], None),
+            "color": _safe(lambda: list(node.color().rgb()) if node.color() else None, None),
+            "is_bypassed": _safe(node.isBypassed) if hasattr(node, "isBypassed") else None,
+            "is_displayed": _safe(getattr(node, "isDisplayFlagSet", lambda: None)),
+            "is_rendered": _safe(getattr(node, "isRenderFlagSet", lambda: None)),
             "parm_count_total": len(all_parms),
             "parm_filter": {"max_parms": max_parms, "only_non_default": only_non_default},
             "parameters": [],

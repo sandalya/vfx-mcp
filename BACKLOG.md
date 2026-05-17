@@ -19,6 +19,11 @@
 - [x] 2026-05-17 — `get_node_info` cap removed; new `max_parms` and `only_non_default` flags
 - [x] 2026-05-17 — Bugfix: defensive serialization (None-safe inputs/outputs/parms) — unblocks setvariant, collection::2.0
 - [x] 2026-05-17 — First full /stage scene analyzed (`docs/SCENE_ANALYSIS.md`)
+- [x] 2026-05-17 — Bridge tools `forward_to_cc` / `read_cc_inbox` (CD ↔ CC handoff via `notes/cc_inbox.md`)
+- [x] 2026-05-17 — README refreshed: actual tool list + agent instructions section (CD picks up via `get_project_context`)
+- [x] 2026-05-17 — Bugfix: defensive top-level `get_node_info` (ObjNode `isBypassed` AttributeError, plus `_safe()` wrapper for every field)
+- [x] 2026-05-17 — Plugin error responses now include `exception_type` + full `traceback` (so CD can pinpoint future NoneTypes without round-tripping through the user)
+- [x] 2026-05-17 — `scripts/dump_scene.py` (offline JSON dump of /stage and /obj — workaround for MCP token budget on big scenes)
 
 ## TODO
 - [ ] Bridge tool `forward_to_cc(title, body)` — CD writes structured tickets to `notes/cc_inbox.md`; CC reads on demand
@@ -27,7 +32,13 @@
 - [ ] Decide on `set_material` exposure in bridge (handler exists in plugin)
 - [ ] Claude Desktop Project "VFX MCP" with auto-instructions to call `get_project_context`
 - [ ] Decide fate of `execute_houdini_code` bridge tool (currently surfaces but plugin blocks)
-- [ ] Update README — currently mentions OPUS/set_material/asset_lib which were removed or never exposed
+- [ ] Update README — currently mentions OPUS/set_material/asset_lib which were removed or never exposed (DONE 2026-05-17 in `cb121cf`)
+- [ ] BUG 2: some /stage nodes still return `'NoneType' object has no attribute 'name'` (moon, hdri, tree_decoy, NO_PROXY_TEX1/2). Defensive `get_node_info` didn't cover the root cause — investigate with new traceback field next time CD hits it.
+- [ ] Token-budget tools for big scenes:
+  - `get_node_parm_names_only(path)` — list non-default parm names without values
+  - `include_raw=False` flag on `get_node_info` — drop `raw_value` to save tokens
+  - `parm_prefix_filter` on `get_node_info` — e.g. only `xn__arnoldglobal*`
+  - `recursive=True` or new `get_node_tree(path, depth=N)` for flat sub-network walks
 
 ## Known scene-level anomalies (from `docs/SCENE_ANALYSIS.md` — informational, not infra TODOs)
 - WIP rendersettings reference `/cams/cam_sh010` but no such camera (likely typo for `cam_sh110`)
