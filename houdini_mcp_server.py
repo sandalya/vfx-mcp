@@ -69,6 +69,16 @@ class HoudiniConnection:
                 logger.error(f"Error disconnecting from Houdini: {str(e)}")
             self.sock = None
 
+    # Commands that involve flipbook/render and a base64 image payload need
+    # a much longer budget than scene-info / parm reads. Anything not listed
+    # falls back to DEFAULT_TIMEOUT.
+    DEFAULT_TIMEOUT = 10.0
+    COMMAND_TIMEOUTS = {
+        "render_single_view": 120.0,
+        "render_quad_view": 180.0,
+        "render_specific_camera": 120.0,
+    }
+
     def send_command(self, cmd_type: str, params: Dict[str, Any] = None) -> Dict[str, Any]:
         """
         Send a JSON command to Houdini's server and wait for the JSON response.
@@ -81,17 +91,18 @@ class HoudiniConnection:
 
         command = {"type": cmd_type, "params": params or {}}
         data_out = json.dumps(command).encode("utf-8")
+        timeout = self.COMMAND_TIMEOUTS.get(cmd_type, self.DEFAULT_TIMEOUT)
 
         try:
             self.sock.sendall(data_out)
-            logger.info(f"Sent command to Houdini: {command}")
+            logger.info(f"Sent command to Houdini: {command} (timeout={timeout}s)")
 
-            self.sock.settimeout(10.0)
+            self.sock.settimeout(timeout)
             buffer = b""
             start_time = asyncio.get_event_loop().time()
             while True:
-                if asyncio.get_event_loop().time() - start_time > 10.0:
-                    raise socket.timeout("Timeout waiting for Houdini response")
+                if asyncio.get_event_loop().time() - start_time > timeout:
+                    raise socket.timeout(f"Timeout waiting for Houdini response ({timeout}s)")
 
                 chunk = self.sock.recv(8192)
                 if not chunk:
@@ -334,6 +345,81 @@ def set_node_parameter(ctx: Context, node_path: str, parm_name: str, value: Any)
     except Exception as e:
         logger.error(f"Unexpected error in set_node_parameter tool: {str(e)}", exc_info=True)
         return f"Server Error setting parameter: {str(e)}"
+
+@mcp.tool()
+def get_usd_prim_info(ctx: Context, stage_node: str, prim_path: str,
+                      max_attrs: int = 80, only_authored: bool = True) -> str:
+    """
+    Inspect a USD prim inside a LOP's composed stage. Use this when content
+    lives as USD prims rather than Houdini nodes — cameras, lights from
+    imported rigs, mesh assets brought in via `pl_usd_import` / sublayer /
+    reference. `get_node_info` only sees Houdini nodes and will miss these.
+
+    stage_node: Houdini LOP path whose composed stage to sample.
+                Examples: "/stage", "/stage/plarium_import1", any LOP.
+    prim_path:  USD prim path inside that stage.
+                Examples: "/cameras/cam_sh120", "/world/lights/key",
+                "/$HIPNAME/char/rig".
+    max_attrs:  cap on returned attributes (default 80).
+    only_authored: if True, skip schema-default attrs and return only what's
+                   explicitly authored (the actually-configured values).
+
+    Returns JSON: type, kind, authored attributes (translate/rotate/focal/
+    intensity/...), world-space 4x4 transform, camera summary if applicable,
+    children prim paths. On miss, returns siblings_at_parent so you can
+    discover the right path.
+    """
+    try:
+        conn = get_houdini_connection()
+        params = {
+            "stage_node": stage_node,
+            "prim_path": prim_path,
+            "max_attrs": max_attrs,
+            "only_authored": only_authored,
+        }
+        response = conn.send_command("get_usd_prim_info", params)
+        if response.get("status") == "error":
+            origin = response.get('origin', 'houdini')
+            return f"Error ({origin}): {response.get('message', 'Unknown error')}"
+        return json.dumps(response.get("result", {}), indent=2, default=str)
+    except ConnectionError as e:
+        return f"Connection Error getting USD prim info: {str(e)}"
+    except Exception as e:
+        logger.error(f"Unexpected error in get_usd_prim_info tool: {str(e)}", exc_info=True)
+        return f"Server Error getting USD prim info: {str(e)}"
+
+@mcp.tool()
+def list_usd_prims(ctx: Context, stage_node: str, root: str = "/",
+                   filter_type: str = None, max_prims: int = 200) -> str:
+    """
+    Walk a LOP's USD stage and list prims. Use to discover what's actually
+    in an imported USD layer — cameras, lights, meshes that don't appear
+    as Houdini nodes.
+
+    stage_node: Houdini LOP path (e.g. "/stage").
+    root: USD path to start traversal. "/" walks the whole stage.
+    filter_type: optional substring match on USD type name, case-insensitive.
+                 Examples: "Camera", "Light", "Mesh", "Xform". None = all.
+    max_prims: cap.
+
+    Returns JSON list of {path, type, kind}. Truncated flag set if cap hit.
+    """
+    try:
+        conn = get_houdini_connection()
+        params = {"stage_node": stage_node, "root": root, "max_prims": max_prims}
+        if filter_type:
+            params["filter_type"] = filter_type
+        response = conn.send_command("list_usd_prims", params)
+        if response.get("status") == "error":
+            origin = response.get('origin', 'houdini')
+            return f"Error ({origin}): {response.get('message', 'Unknown error')}"
+        return json.dumps(response.get("result", {}), indent=2, default=str)
+    except ConnectionError as e:
+        return f"Connection Error listing USD prims: {str(e)}"
+    except Exception as e:
+        logger.error(f"Unexpected error in list_usd_prims tool: {str(e)}", exc_info=True)
+        return f"Server Error listing USD prims: {str(e)}"
+
 
 @mcp.tool()
 def execute_houdini_code(ctx: Context, code: str) -> str:

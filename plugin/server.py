@@ -190,6 +190,8 @@ class HoudiniMCPServer:
             "set_material": self.set_material,
             "get_asset_lib_status": self.get_asset_lib_status,
             "import_opus_url": self.handle_import_opus_url,
+            "get_usd_prim_info": self.get_usd_prim_info,
+            "list_usd_prims": self.list_usd_prims,
             # Add new render handlers
             "render_single_view": self.handle_render_single_view,
             "render_quad_view": self.handle_render_quad_view,
@@ -543,6 +545,183 @@ class HoudiniMCPServer:
             node_info["outputs_error"] = f"{type(e).__name__}: {e}"
 
         return node_info
+
+    # -------------------------------------------------------------------------
+    # USD Prim Inspection (read-only)
+    # Content imported via USD layers (pl_usd_import, sublayer, reference)
+    # lives as USD prims inside a LOP's composed stage, not as Houdini nodes.
+    # `get_node_info` can't see those. These two methods bridge that gap.
+    # -------------------------------------------------------------------------
+
+    def _serialize_usd_value(self, val):
+        """Best-effort serialize a USD attribute value to JSON-friendly form."""
+        if val is None:
+            return None
+        if isinstance(val, (bool, int, float, str)):
+            return val
+        if hasattr(val, "pathString"):  # Sdf.Path
+            return val.pathString
+        if hasattr(val, "GetText"):     # Tf.Token
+            try:
+                return val.GetText()
+            except Exception:
+                pass
+        try:
+            if hasattr(val, "__iter__") and not isinstance(val, (str, bytes)):
+                return [self._serialize_usd_value(v) for v in val]
+        except Exception:
+            pass
+        try:
+            return str(val)
+        except Exception:
+            return f"<unserializable {type(val).__name__}>"
+
+    def _usd_world_transform(self, prim, time):
+        """4x4 local-to-world transform as nested list, or None if not Xformable."""
+        try:
+            from pxr import UsdGeom
+            if not prim.IsA(UsdGeom.Xformable):
+                return None
+            xf = UsdGeom.Xformable(prim)
+            mat = xf.ComputeLocalToWorldTransform(time)
+            return [list(row) for row in mat]
+        except Exception:
+            return None
+
+    def _usd_camera_summary(self, prim, time):
+        """Camera-specific attrs if prim is a UsdGeomCamera; None otherwise."""
+        try:
+            from pxr import UsdGeom
+            if not prim.IsA(UsdGeom.Camera):
+                return None
+            cam = UsdGeom.Camera(prim)
+            clip = cam.GetClippingRangeAttr().Get(time)
+            return {
+                "focal_length_mm": cam.GetFocalLengthAttr().Get(time),
+                "horizontal_aperture_mm": cam.GetHorizontalApertureAttr().Get(time),
+                "vertical_aperture_mm": cam.GetVerticalApertureAttr().Get(time),
+                "clipping_range": [clip[0], clip[1]] if clip else None,
+                "projection": str(cam.GetProjectionAttr().Get(time)),
+            }
+        except Exception as e:
+            return {"error": f"{type(e).__name__}: {e}"}
+
+    def _get_stage(self, stage_node_path):
+        """Resolve LOP path → composed Usd.Stage. Returns (stage, error_dict)."""
+        node = hou.node(stage_node_path)
+        if not node:
+            return None, {"status": "error",
+                          "message": f"LOP not found: {stage_node_path}",
+                          "origin": "usd_prim"}
+        if not hasattr(node, "stage"):
+            return None, {"status": "error",
+                          "message": f"Not a LOP (no .stage()): {stage_node_path} "
+                                     f"type={node.type().name()}",
+                          "origin": "usd_prim"}
+        try:
+            stage = node.stage()
+        except Exception as e:
+            return None, {"status": "error",
+                          "message": f"node.stage() failed: {type(e).__name__}: {e}",
+                          "origin": "usd_prim"}
+        if stage is None:
+            return None, {"status": "error",
+                          "message": f"LOP has no USD stage (uncooked?): {stage_node_path}",
+                          "origin": "usd_prim"}
+        return stage, None
+
+    def get_usd_prim_info(self, stage_node, prim_path, max_attrs=80, only_authored=True):
+        """
+        Inspect a USD prim inside a LOP's composed stage. Use for content brought
+        in via USD layers (cameras, lights from rigs, mesh prims) that doesn't
+        exist as Houdini nodes.
+        """
+        stage, err = self._get_stage(stage_node)
+        if err:
+            return err
+
+        prim = stage.GetPrimAtPath(prim_path)
+        if not prim or not prim.IsValid():
+            # Help user find what's actually there
+            try:
+                parent_path = prim_path.rsplit("/", 1)[0] or "/"
+                parent = stage.GetPrimAtPath(parent_path)
+                siblings = ([c.GetPath().pathString for c in parent.GetChildren()][:20]
+                            if parent and parent.IsValid() else [])
+            except Exception:
+                siblings = []
+            return {
+                "status": "error",
+                "message": f"Prim not found: {prim_path}",
+                "siblings_at_parent": siblings,
+                "origin": "get_usd_prim_info",
+            }
+
+        from pxr import Usd
+        time = Usd.TimeCode(hou.frame())
+
+        attrs_iter = (prim.GetAuthoredAttributes() if only_authored
+                      else prim.GetAttributes())
+        attributes = {}
+        for attr in attrs_iter[:max_attrs]:
+            try:
+                attributes[attr.GetName()] = self._serialize_usd_value(attr.Get(time))
+            except Exception as e:
+                attributes[attr.GetName()] = f"<error: {type(e).__name__}: {e}>"
+
+        return {
+            "prim_path": prim_path,
+            "type": prim.GetTypeName(),
+            "kind": prim.GetMetadata("kind") or None,
+            "active": prim.IsActive(),
+            "instanceable": prim.IsInstanceable(),
+            "attribute_count_total": len(prim.GetAttributes()),
+            "attribute_count_authored": len(prim.GetAuthoredAttributes()),
+            "attributes": attributes,
+            "world_transform_4x4": self._usd_world_transform(prim, time),
+            "camera": self._usd_camera_summary(prim, time),
+            "children": [c.GetPath().pathString for c in prim.GetChildren()],
+        }
+
+    def list_usd_prims(self, stage_node, root="/", filter_type=None, max_prims=200):
+        """
+        Walk USD stage under root. filter_type matches substring on USD type
+        name case-insensitively (e.g. "Camera", "Light", "Mesh"). None = all.
+        """
+        stage, err = self._get_stage(stage_node)
+        if err:
+            return err
+
+        root_prim = stage.GetPrimAtPath(root)
+        if not root_prim or not root_prim.IsValid():
+            return {"status": "error",
+                    "message": f"Root prim not found: {root}",
+                    "origin": "list_usd_prims"}
+
+        from pxr import Usd
+        filter_lc = filter_type.lower() if filter_type else None
+        prims = []
+        truncated = False
+        for prim in Usd.PrimRange(root_prim):
+            if len(prims) >= max_prims:
+                truncated = True
+                break
+            t = str(prim.GetTypeName())
+            if filter_lc and filter_lc not in t.lower():
+                continue
+            prims.append({
+                "path": prim.GetPath().pathString,
+                "type": t,
+                "kind": prim.GetMetadata("kind") or "",
+            })
+        return {
+            "stage_node": stage_node,
+            "root": root,
+            "filter_type": filter_type,
+            "count": len(prims),
+            "truncated": truncated,
+            "prims": prims,
+        }
 
     def execute_code(self, code):
         """Executes arbitrary Python code within Houdini."""
