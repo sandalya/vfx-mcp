@@ -381,7 +381,7 @@ class HoudiniMCPServer:
             "type": node.type().name(),
             "category": node.type().category().name(),
             "position": [node.position()[0], node.position()[1]],
-            "color": list(node.color()) if node.color() else None,
+            "color": list(node.color().rgb()) if node.color() else None,
             "is_bypassed": node.isBypassed(),
             "is_displayed": getattr(node, "isDisplayFlagSet", lambda: None)(),
             "is_rendered": getattr(node, "isRenderFlagSet", lambda: None)(),
