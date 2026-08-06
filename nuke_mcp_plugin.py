@@ -79,6 +79,15 @@ def cmd_ping(payload):
     return {"pong": True}
 
 
+def cmd_print(payload):
+    """Print a message to Nuke's Script Editor output. Whitelisted stand-in
+    for execute_code -- for the hotkey-overlay PoC, which only ever needs
+    to print, not run arbitrary code."""
+    message = str(payload.get("message", ""))
+    print(message)
+    return {"printed": message}
+
+
 def cmd_get_script_info(payload):
     root = nuke.root()
     return {
@@ -175,11 +184,175 @@ def cmd_execute_code(payload):
 
 DISPATCH = {
     "ping": cmd_ping,
+    "print": cmd_print,
     "get_script_info": cmd_get_script_info,
     "list_nodes": cmd_list_nodes,
     "get_nodes_in_view": cmd_get_nodes_in_view,
     "execute_code": cmd_execute_code,
 }
+
+
+# ---- Nuke-side hotkey menu (dev-loop testing) --------------------------
+# OS-level global hotkeys (keyboard pkg's WH_KEYBOARD_LL hook, then raw
+# RegisterHotKey) never fired -- likely swallowed by AV/EDR, since that
+# hook shape is exactly what keyloggers use. Nuke's own menu shortcut
+# system doesn't have that problem, so hotkeys live here instead.
+#
+# menu.py only needs to call register_menu() once, at Nuke startup:
+#     import nuke_mcp_plugin
+#     nuke_mcp_plugin.register_menu()
+#
+# The registered shortcut's command string reloads this module and calls
+# a function *by name* -- so once registered, iterating just means: edit
+# this file, deploy, press the hotkey. No menu.py edits, no Nuke restart.
+
+MENU_PATH = "Little Helpers/Unused/Quick Print Test"
+
+# Bump this by hand and redeploy to prove the reload loop actually picks
+# up new code, without restarting Nuke.
+TEST_ITERATION = 2
+
+
+def cmd_print_test():
+    """Triggered by the alt+shift+p Nuke menu shortcut (see register_menu).
+    Not part of DISPATCH -- this only ever runs Nuke-side, never over the
+    socket."""
+    message = f"Hotkey -> cmd_print works! iteration={TEST_ITERATION}"
+    print(message)
+    return message
+
+
+def register_menu():
+    """Idempotent -- safe to call repeatedly without piling up duplicate
+    menu entries (removes the old item at MENU_PATH first, if present)."""
+    menu = nuke.menu("Nodes")
+    if menu.findItem(MENU_PATH):
+        menu.removeItem(MENU_PATH)
+    menu.addCommand(
+        MENU_PATH,
+        "import importlib, nuke_mcp_plugin; importlib.reload(nuke_mcp_plugin); "
+        "nuke_mcp_plugin.show_hud()",
+        "ctrl+shift+a",
+    )
+
+
+# ---- transparent HUD ----------------------------------------------------
+# Nuke is itself a Qt app (PySide6 as of Nuke 16), so the HUD widget runs
+# straight inside Nuke's own Qt event loop -- no separate process, no
+# socket, no OS-level hotkey. Ported from the standalone nuke_overlay.py
+# PoC (already visually verified there: real transparency, rounded panel
+# via manual paintEvent since QSS backgrounds don't reliably paint on a
+# top-level frameless+translucent QWidget).
+
+try:
+    from PySide6 import QtWidgets, QtCore, QtGui
+except ImportError:
+    from PySide2 import QtWidgets, QtCore, QtGui
+
+_hud = None  # module-level ref -- keeps the widget alive; without it,
+             # Python would GC the shown window as soon as show_hud() returns
+
+
+class _PrintHUD(QtWidgets.QWidget):
+    def __init__(self):
+        super().__init__()
+        self.setWindowFlags(
+            QtCore.Qt.FramelessWindowHint | QtCore.Qt.WindowStaysOnTopHint | QtCore.Qt.Tool
+        )
+        self.setAttribute(QtCore.Qt.WA_TranslucentBackground)
+        self.setAttribute(QtCore.Qt.WA_DeleteOnClose, False)
+
+        self.setStyleSheet("""
+            QLabel { color: rgba(230, 230, 230, 230); font-size: 11px; }
+            QLineEdit {
+                background-color: rgba(255, 255, 255, 20);
+                color: white;
+                border: 1px solid rgba(255, 255, 255, 60);
+                border-radius: 6px;
+                padding: 6px;
+            }
+            QPushButton {
+                background-color: rgba(70, 130, 220, 210);
+                color: white;
+                border: none;
+                border-radius: 6px;
+                padding: 8px;
+                font-weight: 600;
+            }
+            QPushButton:hover { background-color: rgba(90, 150, 240, 230); }
+            QPushButton:pressed { background-color: rgba(50, 100, 180, 230); }
+            #status { color: rgba(150, 220, 150, 230); font-size: 10px; }
+        """)
+
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.setContentsMargins(14, 12, 14, 12)
+        layout.setSpacing(8)
+
+        title = QtWidgets.QLabel("Nuke quick print")
+        title.setFont(QtGui.QFont("Segoe UI", 9, QtGui.QFont.DemiBold))
+        layout.addWidget(title)
+
+        self.input = QtWidgets.QLineEdit()
+        self.input.setPlaceholderText("message...")
+        self.input.returnPressed.connect(self.send_print)
+        layout.addWidget(self.input)
+
+        btn = QtWidgets.QPushButton("Print to Script Editor")
+        btn.clicked.connect(self.send_print)
+        layout.addWidget(btn)
+
+        self.status = QtWidgets.QLabel("")
+        self.status.setObjectName("status")
+        layout.addWidget(self.status)
+
+        self.resize(260, 130)
+
+    def paintEvent(self, event):
+        painter = QtGui.QPainter(self)
+        painter.setRenderHint(QtGui.QPainter.Antialiasing)
+        path = QtGui.QPainterPath()
+        path.addRoundedRect(self.rect().adjusted(1, 1, -1, -1), 12, 12)
+        painter.fillPath(path, QtGui.QColor(25, 25, 28, 215))
+        painter.setPen(QtGui.QColor(255, 255, 255, 40))
+        painter.drawPath(path)
+        super().paintEvent(event)
+
+    def send_print(self):
+        message = self.input.text().strip() or "(hello from HUD)"
+        print(message)
+        self.status.setText("printed ✓")
+        QtCore.QTimer.singleShot(500, self.hide)
+
+    def show_near_cursor(self):
+        pos = QtGui.QCursor.pos()
+        self.move(pos.x() - self.width() // 2, pos.y() - self.height() - 10)
+        self.input.clear()
+        self.status.setText("")
+        self.show()
+        self.raise_()
+        self.activateWindow()
+        self.input.setFocus()
+
+    def focusOutEvent(self, event):
+        self.hide()
+        super().focusOutEvent(event)
+
+    def keyPressEvent(self, event):
+        if event.key() == QtCore.Qt.Key_Escape:
+            self.hide()
+        else:
+            super().keyPressEvent(event)
+
+
+def show_hud():
+    """Triggered by the Nuke-side hotkey (see register_menu). Creates the
+    HUD once and reuses it across calls within the same reload -- but
+    every hotkey press reloads this module first, which resets `_hud` to
+    None and replaces any still-open widget with a fresh one."""
+    global _hud
+    if _hud is None:
+        _hud = _PrintHUD()
+    _hud.show_near_cursor()
 
 
 # ---- socket server ----------------------------------------------------
