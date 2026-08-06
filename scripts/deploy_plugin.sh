@@ -1,24 +1,49 @@
 #!/usr/bin/env bash
-# Deploy plugin/*.py to pc137 with timestamped backups.
-# Usage: ./scripts/deploy_plugin.sh
+# Deploy plugin code to pc137, with a timestamped backup before every
+# file overwrite.
+# Usage: ./scripts/deploy_plugin.sh <houdini|nuke|all>
 # Requires: ssh pc137 alias configured, VPN up.
 
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-LOCAL_DIR="$REPO_ROOT/plugin"
-REMOTE_DIR='C:/Users/Admin/Documents/houdini21.0/scripts/python/houdinimcp'
 STAMP="$(date +%Y%m%d_%H%M%S)"
 
-FILES=("server.py" "HoudiniMCPRender.py")
+HOUDINI_LOCAL_DIR="$REPO_ROOT/plugin"
+HOUDINI_REMOTE_DIR='C:/Users/Admin/Documents/houdini21.0/scripts/python/houdinimcp'
+HOUDINI_FILES=("server.py" "HoudiniMCPRender.py")
 
-# Sanity: every file must exist locally before we start
-for f in "${FILES[@]}"; do
-  if [ ! -f "$LOCAL_DIR/$f" ]; then
-    echo "ERROR: local plugin file not found at $LOCAL_DIR/$f" >&2
-    exit 1
-  fi
-done
+NUKE_LOCAL_DIR="$REPO_ROOT"
+NUKE_REMOTE_DIR='C:/Users/Admin/.nuke'
+NUKE_FILES=("nuke_mcp_plugin.py")
+
+TARGET="${1:-}"
+if [[ -z "$TARGET" || ! "$TARGET" =~ ^(houdini|nuke|all)$ ]]; then
+  echo "Usage: $0 <houdini|nuke|all>" >&2
+  exit 1
+fi
+
+# deploy_one <local_dir> <remote_dir> <file...>
+deploy_one() {
+  local local_dir="$1" remote_dir="$2"
+  shift 2
+  local f
+
+  for f in "$@"; do
+    if [ ! -f "$local_dir/$f" ]; then
+      echo "ERROR: local plugin file not found at $local_dir/$f" >&2
+      exit 1
+    fi
+  done
+
+  for f in "$@"; do
+    local backup_name="${f}.bak_${STAMP}"
+    echo "==> Backup $f -> $backup_name"
+    ssh pc137 "powershell -Command \"Copy-Item '$remote_dir/$f' '$remote_dir/$backup_name'\""
+    echo "==> SCP $f -> pc137"
+    scp "$local_dir/$f" "pc137:$remote_dir/$f"
+  done
+}
 
 echo "==> Reachability check"
 ssh -o BatchMode=yes -o ConnectTimeout=5 pc137 'echo ok' >/dev/null || {
@@ -26,21 +51,41 @@ ssh -o BatchMode=yes -o ConnectTimeout=5 pc137 'echo ok' >/dev/null || {
   exit 1
 }
 
-for f in "${FILES[@]}"; do
-  backup_name="${f}.bak_${STAMP}"
-  echo "==> Backup $f -> $backup_name"
-  ssh pc137 "powershell -Command \"Copy-Item '$REMOTE_DIR/$f' '$REMOTE_DIR/$backup_name'\""
-  echo "==> SCP $f -> pc137"
-  scp "$LOCAL_DIR/$f" "pc137:$REMOTE_DIR/$f"
-done
+if [[ "$TARGET" == "houdini" || "$TARGET" == "all" ]]; then
+  echo "=== Houdini plugin ==="
+  deploy_one "$HOUDINI_LOCAL_DIR" "$HOUDINI_REMOTE_DIR" "${HOUDINI_FILES[@]}"
+fi
+
+if [[ "$TARGET" == "nuke" || "$TARGET" == "all" ]]; then
+  echo "=== Nuke plugin ==="
+  deploy_one "$NUKE_LOCAL_DIR" "$NUKE_REMOTE_DIR" "${NUKE_FILES[@]}"
+fi
 
 echo "==> Done."
 echo
-echo "Next steps on pc137 (RDP):"
-echo "  1. Click the 'Stop MCP' shelf button (or run houdinimcp.stop_server() in Python Shell)"
-echo "  2. Close the Houdini instance that was serving MCP"
-echo "  3. Reopen Houdini, load your scene, in Python Shell run:"
-echo "       import houdinimcp"
-echo "       houdinimcp.start_server(host='0.0.0.0')"
-echo
-echo "  Then restart Claude Desktop locally if bridge tools changed (this run touched plugin only)."
+
+if [[ "$TARGET" == "houdini" || "$TARGET" == "all" ]]; then
+  echo "Next steps for Houdini (RDP):"
+  echo "  1. Click the 'Stop MCP' shelf button (or run houdinimcp.stop_server() in Python Shell)"
+  echo "  2. Close the Houdini instance that was serving MCP"
+  echo "  3. Reopen Houdini, load your scene, in Python Shell run:"
+  echo "       import houdinimcp"
+  echo "       houdinimcp.start_server(host='0.0.0.0')"
+  echo
+fi
+
+if [[ "$TARGET" == "nuke" || "$TARGET" == "all" ]]; then
+  echo "Next steps for Nuke (RDP):"
+  echo "  Safest: restart Nuke entirely -- menu.py re-imports nuke_mcp_plugin"
+  echo "  and calls start_server() fresh, so the new DISPATCH is guaranteed"
+  echo "  to be live."
+  echo "  Faster (less certain): in the Script Editor, run"
+  echo "       import importlib, nuke_mcp_plugin"
+  echo "       importlib.reload(nuke_mcp_plugin)"
+  echo "  This updates the module in place, but the listener thread was"
+  echo "  already started against the old module -- verify with nuke_ping"
+  echo "  and a call to the new command before trusting it."
+  echo
+fi
+
+echo "  Then restart Claude Desktop locally if bridge tools changed."

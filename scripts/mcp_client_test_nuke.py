@@ -45,6 +45,11 @@ async def main():
             for c in r.content:
                 print(c.text if hasattr(c, "text") else c)
 
+            print("\n--- call nuke_get_nodes_in_view ---")
+            r = await session.call_tool("nuke_get_nodes_in_view", {})
+            for c in r.content:
+                print(c.text if hasattr(c, "text") else c)
+
             print("\n--- call nuke_execute_code ---")
             r = await session.call_tool("nuke_execute_code", {"code": "result = nuke.NUKE_VERSION_STRING"})
             for c in r.content:

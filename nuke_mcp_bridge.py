@@ -219,6 +219,30 @@ def nuke_list_nodes(ctx: Context, node_class: str = None) -> str:
         return f"Server Error listing nodes: {str(e)}"
 
 @mcp.tool()
+def nuke_get_nodes_in_view(ctx: Context, node_class: str = None) -> str:
+    """
+    List which nodes currently fall inside the visible area of the Node
+    Graph panel (as opposed to nuke_list_nodes, which returns every node
+    regardless of pan/zoom). Useful when the DAG has been scrolled/zoomed
+    and only the nodes actually on screen matter. Each node in the result
+    has an "in_view" flag; the response also includes the computed
+    viewport rect, center, and zoom for reference.
+    """
+    try:
+        conn = get_nuke_connection()
+        params = {"class": node_class} if node_class else {}
+        response = conn.send_command("get_nodes_in_view", params)
+        if not response.get("ok"):
+            origin = response.get('origin', 'nuke')
+            return f"Error ({origin}): {response.get('error', 'Unknown error')}"
+        return json.dumps(response, indent=2)
+    except ConnectionError as e:
+        return f"Connection Error getting nodes in view: {str(e)}"
+    except Exception as e:
+        logger.error(f"Unexpected error in nuke_get_nodes_in_view tool: {str(e)}", exc_info=True)
+        return f"Server Error getting nodes in view: {str(e)}"
+
+@mcp.tool()
 def nuke_execute_code(ctx: Context, code: str) -> str:
     """
     Execute raw Python inside the running Nuke session.

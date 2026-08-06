@@ -30,6 +30,7 @@
 - [x] 2026-08-06 — `nuke_mcp_plugin.py` deployed to pc137 `~/.nuke/`, wired via `menu.py` (manual start only, no auto-start — mirrors Houdini)
 - [x] 2026-08-06 — Nuke MCP round-trip confirmed end-to-end: raw TCP ping, direct call, and real MCP protocol (list_tools/call_tool via stdio subprocess) all working against live Nuke on pc137 (port 9877). No SSH tunnel — direct VPN TCP like Houdini. Found: pc137 Windows Firewall fully OFF (all profiles) — port access is VPN reachability + app-level allowlist only, no OS rule for 9876 either.
 - [x] 2026-08-06 — `nuke_mcp_plugin.py`: every MCP command now prints to Nuke's Script Editor (`[nuke-mcp HH:MM:SS] ip -> cmd(payload) -> ok/ERROR`) for live debugging; also fixed a bug where handler exceptions skipped `_audit()`. Deployed + verified live; pushed to `origin/main` (`909d28f`).
+- [x] 2026-08-06 — New command `get_nodes_in_view` (plugin + bridge tool `nuke_get_nodes_in_view`): reconstructs the DAG's visible viewport rect from `nuke.center()`/`nuke.zoom()` + the `DAG_Window` Qt widget's pixel size, flags each node `in_view` by bounding-box intersection. `scripts/deploy_plugin.sh` extended to take a `<houdini|nuke|all>` target so it can deploy either plugin, each with its own backup. Deployed via hot `importlib.reload` (no Nuke restart needed) and verified round-trip on both raw TCP and the real MCP tool call.
 
 ## TODO
 - [ ] Bridge tool `forward_to_cc(title, body)` — CD writes structured tickets to `notes/cc_inbox.md`; CC reads on demand

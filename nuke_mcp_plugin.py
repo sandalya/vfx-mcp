@@ -94,6 +94,72 @@ def cmd_list_nodes(payload):
     return {"nodes": [{"name": n.name(), "class": n.Class()} for n in nodes]}
 
 
+def cmd_get_nodes_in_view(payload):
+    """
+    Which nodes currently fall inside the visible area of the Node Graph
+    panel -- unlike cmd_list_nodes, which returns every node regardless of
+    pan/zoom. Nuke has no built-in "is this node on screen" API, so this
+    reconstructs the viewport rect from nuke.center()/nuke.zoom() (DAG
+    pan/zoom, in world units) and the pixel size of the DAG's Qt widget,
+    then checks each node's bounding box against that rect.
+
+    Caveat: if multiple Node Graph panels/tabs are open, this grabs the
+    first "DAG_Window" Qt widget found -- not necessarily the one the user
+    is looking at.
+    """
+    try:
+        from PySide2 import QtWidgets
+    except ImportError:
+        from PySide6 import QtWidgets
+
+    center = nuke.center()
+    zoom = nuke.zoom()
+
+    app = QtWidgets.QApplication.instance()
+    w_px = h_px = None
+    for w in app.allWidgets():
+        if w.metaObject().className() == "DAG_Window":
+            geo = w.geometry()
+            w_px, h_px = geo.width(), geo.height()
+            break
+
+    if w_px is None:
+        raise RuntimeError("no DAG_Window widget found -- is a Node Graph panel open?")
+
+    half_w = (w_px / zoom) / 2.0
+    half_h = (h_px / zoom) / 2.0
+    vis_rect = {
+        "x_min": center[0] - half_w, "x_max": center[0] + half_w,
+        "y_min": center[1] - half_h, "y_max": center[1] + half_h,
+    }
+
+    node_class = payload.get("class")
+    all_nodes = nuke.allNodes(node_class) if node_class else nuke.allNodes()
+
+    def intersects(x0, y0, x1, y1):
+        return not (x1 < vis_rect["x_min"] or x0 > vis_rect["x_max"]
+                    or y1 < vis_rect["y_min"] or y0 > vis_rect["y_max"])
+
+    nodes = []
+    for n in all_nodes:
+        try:
+            sw, sh = n.screenWidth(), n.screenHeight()
+        except Exception:
+            sw, sh = 80, 18
+        x, y = n.xpos(), n.ypos()
+        nodes.append({
+            "name": n.name(), "class": n.Class(),
+            "x": x, "y": y, "w": sw, "h": sh,
+            "in_view": intersects(x, y, x + sw, y + sh),
+        })
+
+    return {
+        "center": list(center), "zoom": zoom,
+        "widget_px": [w_px, h_px], "visible_rect": vis_rect,
+        "nodes": nodes,
+    }
+
+
 def cmd_execute_code(payload):
     """
     Raw exec -- scaffold phase only, no sandboxing yet.
@@ -111,6 +177,7 @@ DISPATCH = {
     "ping": cmd_ping,
     "get_script_info": cmd_get_script_info,
     "list_nodes": cmd_list_nodes,
+    "get_nodes_in_view": cmd_get_nodes_in_view,
     "execute_code": cmd_execute_code,
 }
 
