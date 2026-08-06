@@ -61,6 +61,18 @@ def _is_allowed(cmd_type, payload):
     return True
 
 
+def _summarize_payload(payload, limit=300):
+    if not payload:
+        return ""
+    s = json.dumps(payload, default=str)
+    return s if len(s) <= limit else s[:limit] + "...(truncated)"
+
+
+def _print_to_editor(msg):
+    """Runs on Nuke's main thread so it lands in the Script Editor output."""
+    print(msg)
+
+
 # ---- command handlers (executed on Nuke's main thread) --------------
 
 def cmd_ping(payload):
@@ -123,6 +135,8 @@ def _handle_client(conn, addr):
             if not line.strip():
                 continue
 
+            cmd_type = None
+            payload = {}
             try:
                 req = json.loads(line.decode("utf-8"))
                 cmd_type = req.get("type")
@@ -135,12 +149,22 @@ def _handle_client(conn, addr):
                     if handler is None:
                         resp = {"ok": False, "error": f"unknown command: {cmd_type}"}
                     else:
-                        result = nuke.executeInMainThreadWithResult(handler, payload)
-                        resp = {"ok": True, **result}
-
-                _audit(cmd_type, payload, resp.get("ok", False))
+                        try:
+                            result = nuke.executeInMainThreadWithResult(handler, payload)
+                            resp = {"ok": True, **result}
+                        except Exception as handler_exc:
+                            resp = {"ok": False, "error": str(handler_exc)}
             except Exception as e:
                 resp = {"ok": False, "error": str(e)}
+
+            ts = datetime.datetime.now().strftime("%H:%M:%S")
+            outcome = "ok" if resp.get("ok") else f"ERROR: {resp.get('error')}"
+            log_line = f"[nuke-mcp {ts}] {addr[0]} -> {cmd_type}({_summarize_payload(payload)}) -> {outcome}"
+            try:
+                nuke.executeInMainThreadWithResult(_print_to_editor, (log_line,))
+            except Exception:
+                pass  # printing must never break the response path
+            _audit(cmd_type, payload, resp.get("ok", False))
 
             conn.sendall((json.dumps(resp) + "\n").encode("utf-8"))
 
