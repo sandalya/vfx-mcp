@@ -954,3 +954,58 @@ if update_mode == hou.updateMode.Manual:
 4. Опціонально: задокументувати в README обмеження "viewport must be in Auto Update mode".
 
 ---
+
+## [note] Steam сетап — стан сесії, наступні кроки
+_2026-06-23T22:53:51_
+
+
+## Що зробили за сесію
+
+### MCP інфраструктура
+- Підняли коннект PC-137 (10.10.10.31) через Loky VPN (gamai 10.10.11.43)
+- Розблокували execute_houdini_code з security filter (forbidden: os/subprocess/sys/eval/exec/open)
+- Додали connect_nodes tool в bridge (houdini_mcp_server.py) і dispatcher (server.py на PC-137)
+- Розширили SAFE_PARMS pyro параметрами
+
+### Поточний стан steam сцени
+Файл НЕ збережений! При наступній сесії треба або зберегти або зібрати заново.
+
+SOP ланцюжок (/obj/steam_emitter_01/):
+  emitter_shape (tube) → remesh1 → pyrosource1 (initialize:source)
+  → noise_density (attribnoise, density) → noise_temperature (attribnoise, temperature)
+  → volumerasterize1 (voxelsize:0.05, attributes:"density temperature")
+  → OUT_SOURCE (null) → steam_sim (dopnet)
+
+DOP мережа (/obj/steam_emitter_01/steam_sim/):
+  smokeobject1 (smokeobject_sparse, divsize:0.05) → pyrosolver1[0]
+  volumesource1 (soppath:/obj/steam_emitter_01/OUT_SOURCE, menu, density+temperature) → pyrosolver1[2]
+  pyrosolver1 (pyrosolver_sparse, timescale:0.6, substeps:1, buoyancylift:3.0,
+               tempcooling:0.8, dissipation:0.015, turbulence:0.3, disturbance:2.0) → output
+
+### Ключові висновки
+- Sparse solver — правильний вибір (легший, авто-resize контейнера, без gasresizefluiddynamic)
+- Звичайний pyrosolver вішає при малому divsize
+- volumesource input для pyrosolver_sparse — input[2]
+- hou.setFrame(великий фрейм) вішає MCP таймаут — просити юзера перемотати вручну
+- viewer.cd() всередині допнету для snapshot + output.setDisplayFlag(True)
+- resimulate скидає viewer з допнету
+- На frame 40 дим піднімався вгору (sparse працює)
+- Але на frame 80 зависло — можливо проблема в volumesource input index
+
+### Референс пилюка сетап (від фхера, /obj/dust_sim/dopnet1)
+- pyrosolver_sparse + smokeobject_sparse
+- gasfieldwrangle для turbmask (маска турбулентності по висоті)
+- gasvortexconfinement для деталі
+- divsize через ch("../divsize") — винесено на рівень geo
+- dissipation:0.013, turbulence:0.06*5.5, disturbance:3*4, buoyancylift:1
+
+### Наступні кроки
+1. Зберегти сцену або зібрати заново
+2. Розібратись чому висне на frame 80 (перевірити volumesource input index для sparse)
+3. Перевірити frame 40 snapshot
+4. Поступово підвищити резолюцію: 0.05 → 0.04 → 0.03
+5. Зробити кілька варіацій (різний seed, розмір емітера)
+6. File cache → VDB export
+7. Scatter по сцені
+
+---

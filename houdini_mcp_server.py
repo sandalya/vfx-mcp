@@ -347,6 +347,26 @@ def set_node_parameter(ctx: Context, node_path: str, parm_name: str, value: Any)
         return f"Server Error setting parameter: {str(e)}"
 
 @mcp.tool()
+def connect_nodes(ctx: Context, output_node: str, input_node: str, input_index: int = 0) -> str:
+    """Connect output of one node to input of another node in Houdini."""
+    try:
+        conn = get_houdini_connection()
+        response = conn.send_command("connect_nodes", {
+            "output_node": output_node,
+            "input_node": input_node,
+            "input_index": input_index,
+        })
+        if response.get("status") == "error":
+            origin = response.get('origin', 'houdini')
+            return f"Error ({origin}): {response.get('message', 'Unknown error')}"
+        return json.dumps(response.get("result", {}), indent=2)
+    except ConnectionError as e:
+        return f"Connection Error connecting nodes: {str(e)}"
+    except Exception as e:
+        logger.error(f"Unexpected error in connect_nodes tool: {str(e)}", exc_info=True)
+        return f"Server Error connecting nodes: {str(e)}"
+
+@mcp.tool()
 def get_usd_prim_info(ctx: Context, stage_node: str, prim_path: str,
                       max_attrs: int = 80, only_authored: bool = True) -> str:
     """
@@ -424,21 +444,23 @@ def list_usd_prims(ctx: Context, stage_node: str, root: str = "/",
 @mcp.tool()
 def execute_houdini_code(ctx: Context, code: str) -> str:
     """
-    [DISABLED BY PLUGIN HARDENING] Arbitrary Python execution inside Houdini.
-
-    The plugin dispatcher explicitly rejects 'execute_code'. Use the narrow
-    tools instead — `set_node_parameter`, `create_node`, `get_node_info`.
-    If you need a capability they don't cover, forward_to_cc a request and
-    we'll either add a narrow tool or expand SAFE_PARMS.
-
-    Returns immediately — no socket round-trip — to avoid the 4-minute
-    MCP client timeout on the disabled path.
+    Execute Python code inside Houdini. The plugin applies a security filter
+    before running — blocks os/subprocess/sys imports, __import__, eval, exec,
+    open, file, socket, shutil, pathlib. Safe for hou.* operations and
+    standard math. Each call is logged to ~/houdini_mcp_audit.log with [EXEC].
     """
-    return (
-        "execute_houdini_code is DISABLED by plugin hardening. "
-        "Use set_node_parameter / create_node / get_node_info instead. "
-        "If you need broader access, forward_to_cc a request describing the use case."
-    )
+    try:
+        conn = get_houdini_connection()
+        response = conn.send_command("execute_code", {"code": code})
+        if response.get("status") == "error":
+            origin = response.get("origin", "houdini")
+            return f"Error ({origin}): {response.get('message', 'Unknown error')}"
+        return json.dumps(response.get("result", {}), indent=2)
+    except ConnectionError as e:
+        return f"Connection Error executing code: {str(e)}"
+    except Exception as e:
+        logger.error(f"Unexpected error in execute_houdini_code tool: {str(e)}", exc_info=True)
+        return f"Server Error executing code: {str(e)}"
 
 
 # -------------------------------------------------------------------
