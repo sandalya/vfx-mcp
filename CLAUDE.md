@@ -23,6 +23,11 @@ That's the log. No separate write-up, no memory update unless the user asks.
 - Destructive actions (deleting files/nodes, force-git, changing production data, anything on pc137 beyond a normal read/deploy) — always ask before doing it, even if technically permitted
 - Full context (topology, tool list, kill switches) lives in README.md — read it on demand
 
+## Reference docs
+
+- `docs/SCENE_ANALYSIS.md` — Houdini `/stage` lighting scene breakdown (lighting artist's node topology, render passes, light rig)
+- `docs/NUKE_COMP_LAYER_ASSEMBLY.md` — Sashok's recurring Nuke comp pattern: each layer branch (fg/bg/floorVolume/atmo/...) assembled from 4 Read nodes (lights/beauty/tech/crypto product passes), merged via Copy nodes, per-object mattes off a Cryptomatte/Dot-spine chain. Read this before touching any comp-layer or Read-node tooling.
+
 ## Language
 
 Separate the interface language from the model's working language: write system prompts, instructions, and internal context in English — that's the model's working language, cheaper and more precise — but keep the conversation with the user in their own language. Reply language follows the language of the incoming message, not the language of the system prompt.
