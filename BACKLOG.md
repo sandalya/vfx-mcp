@@ -29,6 +29,7 @@
 - [x] 2026-08-06 — `nuke_mcp_bridge.py` restructured to match `houdini_mcp_server.py` pattern (NukeConnection dataclass, Context, per-command timeouts, get_*_connection singleton)
 - [x] 2026-08-06 — `nuke_mcp_plugin.py` deployed to pc137 `~/.nuke/`, wired via `menu.py` (manual start only, no auto-start — mirrors Houdini)
 - [x] 2026-08-06 — Nuke MCP round-trip confirmed end-to-end: raw TCP ping, direct call, and real MCP protocol (list_tools/call_tool via stdio subprocess) all working against live Nuke on pc137 (port 9877). No SSH tunnel — direct VPN TCP like Houdini. Found: pc137 Windows Firewall fully OFF (all profiles) — port access is VPN reachability + app-level allowlist only, no OS rule for 9876 either.
+- [x] 2026-08-06 — `nuke_mcp_plugin.py`: every MCP command now prints to Nuke's Script Editor (`[nuke-mcp HH:MM:SS] ip -> cmd(payload) -> ok/ERROR`) for live debugging; also fixed a bug where handler exceptions skipped `_audit()`. Deployed + verified live; pushed to `origin/main` (`909d28f`).
 
 ## TODO
 - [ ] Bridge tool `forward_to_cc(title, body)` — CD writes structured tickets to `notes/cc_inbox.md`; CC reads on demand
