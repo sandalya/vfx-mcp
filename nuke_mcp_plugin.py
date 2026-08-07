@@ -347,6 +347,7 @@ DISPATCH = {
 MENU_PATH = "Little Helpers/Unused/Quick Print Test"
 MCP_MENU_PATH = "Little Helpers/MCP Server"
 LAYER_PICKER_MENU_PATH = "Little Helpers/Create Layer Branch"
+VERSION_HUD_MENU_PATH = "Little Helpers/Change Layer Version"
 
 # Bump this by hand and redeploy to prove the reload loop actually picks
 # up new code, without restarting Nuke.
@@ -392,6 +393,15 @@ def register_menu():
         "import importlib, nuke_mcp_plugin; importlib.reload(nuke_mcp_plugin); "
         "nuke_mcp_plugin.show_layer_picker()",
         "ctrl+shift+a",
+    )
+
+    if menu.findItem(VERSION_HUD_MENU_PATH):
+        menu.removeItem(VERSION_HUD_MENU_PATH)
+    menu.addCommand(
+        VERSION_HUD_MENU_PATH,
+        "import importlib, nuke_mcp_plugin; importlib.reload(nuke_mcp_plugin); "
+        "nuke_mcp_plugin.show_version_hud()",
+        "ctrl+shift+d",
     )
 
 
@@ -624,6 +634,28 @@ class _LayerPickerHUD(QtWidgets.QWidget):
         self.show()
         self.raise_()
         self.activateWindow()
+        # focusOutEvent alone isn't reliable for a Qt.Tool widget over RDP
+        # -- clicking the DAG doesn't always transfer focus away cleanly,
+        # so it stayed open (same issue found on _VersionHUD, fixed the
+        # same way there). App-wide mouse filter instead: any press
+        # outside our own rect closes us, regardless of focus semantics.
+        QtWidgets.QApplication.instance().installEventFilter(self)
+
+    def hideEvent(self, event):
+        app = QtWidgets.QApplication.instance()
+        if app is not None:
+            app.removeEventFilter(self)
+        super().hideEvent(event)
+
+    def eventFilter(self, obj, event):
+        if event.type() == QtCore.QEvent.MouseButtonPress:
+            try:
+                global_pos = event.globalPosition().toPoint()  # Qt6/PySide6
+            except AttributeError:
+                global_pos = event.globalPos()  # Qt5/PySide2
+            if not self.geometry().contains(global_pos):
+                self.hide()
+        return super().eventFilter(obj, event)
 
     def focusOutEvent(self, event):
         self.hide()
@@ -690,37 +722,70 @@ def _collapse_sequence(dirpath, pass_name):
     }
 
 
-def _resolve_pass(layer_dir, pass_name):
-    """Find the highest-numbered version folder directly under layer_dir
-    that actually contains files for pass_name, and collapse those files
-    into a sequence. Versions are resolved per-pass, independently --
+def _available_versions(layer_dir, pass_name):
+    """List every version folder directly under layer_dir that actually
+    contains files for pass_name, as a list of (version_int, version_str)
+    sorted ascending. Versions are resolved per-pass, independently --
     per docs/NUKE_COMP_LAYER_ASSEMBLY.md, the 4 passes of a layer-branch
     are not guaranteed to move in lock-step (e.g. beauty/lights at v007
-    while tech/crypto sit at v006 in one recorded shot).
-
-    Raises ValueError if no version folder under layer_dir has any files
-    for pass_name at all."""
-    versions = []
+    while tech/crypto sit at v006 in one recorded shot)."""
+    candidates = []
     for name in os.listdir(layer_dir):
         full = os.path.join(layer_dir, name)
         if not os.path.isdir(full):
             continue
         m = _VERSION_DIR_RE.match(name)
         if m:
-            versions.append((int(m.group(1)), name))
-    versions.sort(reverse=True)
+            candidates.append((int(m.group(1)), name))
+    candidates.sort()
 
-    for _, vname in versions:
+    found = []
+    for num, vname in candidates:
         # Plain "/" join, not os.path.join -- this path's root is a UNC
         # network path (//loky.plarium.local/...) already on forward
         # slashes; os.path.join on Windows mixes in backslashes, which
         # broke Nuke's Read for lights/tech/crypto (confirmed 2026-08-07:
         # beauty worked once Sashok hand-fixed it to all-forward-slash).
-        seq = _collapse_sequence(f"{layer_dir}/{vname}", pass_name)
-        if seq:
-            return vname, seq
+        if _collapse_sequence(f"{layer_dir}/{vname}", pass_name):
+            found.append((num, vname))
+    return found
 
-    raise ValueError(f"no '{pass_name}_product' sequence found under {layer_dir} (any version)")
+
+def _resolve_pass(layer_dir, pass_name):
+    """Highest-numbered version (see _available_versions) for pass_name,
+    collapsed into a sequence. Raises ValueError if no version folder
+    under layer_dir has any files for pass_name at all."""
+    versions = _available_versions(layer_dir, pass_name)
+    if not versions:
+        raise ValueError(f"no '{pass_name}_product' sequence found under {layer_dir} (any version)")
+    _, vname = versions[-1]
+    return vname, _collapse_sequence(f"{layer_dir}/{vname}", pass_name)
+
+
+def _apply_read_sequence(read, pass_name, version, seq, layer_dir):
+    """Set a Read node's file/frame-range knobs from a resolved (version,
+    seq) pair, and flag missing frames (orange tile_color + label) instead
+    of silently building a wrong range. Shared by build_layer_branch (new
+    Read nodes) and _bump_read_version (existing ones)."""
+    read["file"].setValue(f"{layer_dir}/{version}/{seq['pattern']}")
+    read["first"].setValue(seq["first"])
+    read["last"].setValue(seq["last"])
+    read["origfirst"].setValue(seq["first"])
+    read["origlast"].setValue(seq["last"])
+
+    if seq["missing"]:
+        missing_preview = ", ".join(str(f) for f in seq["missing"][:8])
+        if len(seq["missing"]) > 8:
+            missing_preview += ", ..."
+        read["label"].setValue(f"{version}  MISSING FRAMES: {missing_preview}")
+        read["tile_color"].setValue(0xD08000FF)  # orange -- catches the eye
+        print(
+            f"_apply_read_sequence: {pass_name} ({version}) missing "
+            f"{len(seq['missing'])} frame(s): {missing_preview}"
+        )
+    else:
+        read["label"].setValue(version)
+        read["tile_color"].setValue(0)  # clear any stale missing-frames flag
 
 
 def build_layer_branch(layer_name):
@@ -753,29 +818,8 @@ def build_layer_branch(layer_name):
     reads = {}
     for pass_name in _LAYER_BRANCH_PASSES:
         version, seq = _resolve_pass(layer_dir, pass_name)
-        file_path = f"{layer_dir}/{version}/{seq['pattern']}"
-        read = make(
-            "Read",
-            file=file_path,
-            first=seq["first"],
-            last=seq["last"],
-            origfirst=seq["first"],
-            origlast=seq["last"],
-        )
-        if seq["missing"]:
-            missing_preview = ", ".join(str(f) for f in seq["missing"][:8])
-            if len(seq["missing"]) > 8:
-                missing_preview += ", ..."
-            read["label"].setValue(
-                f"{version}  MISSING FRAMES: {missing_preview}"
-            )
-            read["tile_color"].setValue(0xD08000FF)  # orange -- catches the eye
-            print(
-                f"build_layer_branch: {pass_name} ({version}) missing "
-                f"{len(seq['missing'])} frame(s): {missing_preview}"
-            )
-        else:
-            read["label"].setValue(version)
+        read = make("Read")
+        _apply_read_sequence(read, pass_name, version, seq, layer_dir)
         reads[pass_name] = read
 
     # Relative (dx, dy) offsets lifted directly from the captured sh320/bg
@@ -854,6 +898,216 @@ def build_layer_branch(layer_name):
     sticky.setXYpos(anchor_x + 286, anchor_y + 210)
 
     return copy_matte
+
+
+# ---- Version support for existing Read nodes (Ctrl+Shift+D) -------------
+# Function 2, first slice: jump-to-latest / step version up / step version
+# down on whatever Read node(s) are selected, each resolved independently
+# against its own (layer, pass) -- same per-pass-independent rule as
+# build_layer_branch above. No shared "current branch" detection here (that
+# was the fuller Function 2 scope from docs/NUKE_COMP_LAYER_ASSEMBLY.md);
+# this only ever touches nodes the artist has actually selected.
+
+_READ_PATH_RE = re.compile(
+    r"^(?P<layer_dir>.+)/(?P<version>v\d+)/(?P<pass_name>\w+)_product\.",
+    re.IGNORECASE,
+)
+
+
+def _parse_read_file(file_value):
+    """Pull (layer_dir, version, pass_name) back out of a Read node's
+    current file path, per the convention build_layer_branch writes
+    (.../<layer>/<version>/<pass>_product.<frame-token>.<ext>). Not tied
+    to _LAYER_BRANCH_PASSES -- matches whatever pass name actually
+    precedes "_product.", so real production paths and hand-edited ones
+    parse too, regardless of %04d vs #### frame-token style. Returns None
+    if file_value doesn't match the convention at all."""
+    m = _READ_PATH_RE.match(file_value)
+    if not m:
+        return None
+    return m.group("layer_dir"), m.group("version"), m.group("pass_name")
+
+
+def _bump_read_version(read, direction):
+    """direction: "latest" | "up" | "down". Returns (status, detail)
+    where status is "updated" or "skipped"."""
+    file_value = read["file"].value()
+    parsed = _parse_read_file(file_value)
+    if parsed is None:
+        return "skipped", "unrecognized path"
+    layer_dir, current_version, pass_name = parsed
+
+    versions = _available_versions(layer_dir, pass_name)
+    if not versions:
+        return "skipped", "no versions found on disk"
+
+    current_num = int(_VERSION_DIR_RE.match(current_version).group(1))
+    nums = [n for n, _ in versions]
+
+    if direction == "latest":
+        target_num, target_vname = versions[-1]
+        if target_num == current_num:
+            return "skipped", "already at latest"
+    elif direction == "up":
+        higher = [(n, v) for n, v in versions if n > current_num]
+        if not higher:
+            return "skipped", "no higher version available"
+        target_num, target_vname = higher[0]
+    elif direction == "down":
+        lower = [(n, v) for n, v in versions if n < current_num]
+        if not lower:
+            return "skipped", "no lower version available"
+        target_num, target_vname = lower[-1]
+    else:
+        raise ValueError(f"unknown direction {direction!r}")
+
+    seq = _collapse_sequence(f"{layer_dir}/{target_vname}", pass_name)
+    _apply_read_sequence(read, pass_name, target_vname, seq, layer_dir)
+    return "updated", f"{current_version} -> {target_vname}"
+
+
+def bump_selected_reads(direction):
+    """Triggered by a _VersionHUD button. Acts on nuke.selectedNodes(),
+    filtered to Read nodes, each resolved independently -- prints a one-
+    line summary to the Script Editor (same feedback channel used
+    elsewhere in this file; no info-panel wiring yet, see _VersionHUD)."""
+    reads = [n for n in nuke.selectedNodes() if n.Class() == "Read"]
+    updated = 0
+    skipped = 0
+    for read in reads:
+        status, detail = _bump_read_version(read, direction)
+        if status == "updated":
+            updated += 1
+        else:
+            skipped += 1
+        print(f"bump_selected_reads({direction!r}): {read.name()} {status} -- {detail}")
+    print(f"bump_selected_reads({direction!r}): {updated} updated, {skipped} skipped")
+
+
+_version_hud = None  # rebuilt fresh every open, same reasoning as
+                     # _layer_picker_hud above.
+
+
+class _VersionHUD(QtWidgets.QWidget):
+    def __init__(self):
+        super().__init__()
+        self.setWindowFlags(
+            QtCore.Qt.FramelessWindowHint | QtCore.Qt.WindowStaysOnTopHint | QtCore.Qt.Tool
+        )
+        self.setAttribute(QtCore.Qt.WA_DeleteOnClose, False)
+
+        self.setStyleSheet("""
+            QLabel { color: rgba(230, 230, 230, 230); font-size: 11px; }
+            QPushButton {
+                background-color: rgba(70, 130, 220, 210);
+                color: white;
+                border: none;
+                border-radius: 6px;
+                padding: 8px;
+                font-weight: 600;
+                text-align: left;
+            }
+            QPushButton:hover { background-color: rgba(90, 150, 240, 230); }
+            QPushButton:pressed { background-color: rgba(50, 100, 180, 230); }
+            #info { color: rgba(180, 180, 180, 200); font-size: 10px; }
+        """)
+
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.setContentsMargins(14, 12, 14, 12)
+        layout.setSpacing(8)
+
+        title = QtWidgets.QLabel("Change version")
+        title.setFont(QtGui.QFont("Segoe UI", 9, QtGui.QFont.DemiBold))
+        layout.addWidget(title)
+
+        for label, direction in (
+            ("Latest version", "latest"),
+            ("Version +", "up"),
+            ("Version -", "down"),
+        ):
+            btn = QtWidgets.QPushButton(label)
+            btn.setFocusPolicy(QtCore.Qt.NoFocus)
+            btn.clicked.connect(lambda checked=False, d=direction: bump_selected_reads(d))
+            layout.addWidget(btn)
+
+        # Reserved for a future info panel ("outdated version", "missing
+        # frames", etc.) -- deliberately left empty/unwired for now, per
+        # Sashok: just leave room for it, don't build it yet.
+        self.info = QtWidgets.QLabel("")
+        self.info.setObjectName("info")
+        self.info.setMinimumHeight(28)
+        layout.addWidget(self.info)
+
+        self.resize(220, 190)
+
+    def resizeEvent(self, event):
+        path = QtGui.QPainterPath()
+        path.addRoundedRect(QtCore.QRectF(self.rect()), 12, 12)
+        self.setMask(QtGui.QRegion(path.toFillPolygon().toPolygon()))
+        super().resizeEvent(event)
+
+    def paintEvent(self, event):
+        painter = QtGui.QPainter(self)
+        painter.setRenderHint(QtGui.QPainter.Antialiasing)
+        path = QtGui.QPainterPath()
+        path.addRoundedRect(self.rect().adjusted(1, 1, -1, -1), 12, 12)
+        painter.fillPath(path, QtGui.QColor(25, 25, 28, 255))
+        painter.setPen(QtGui.QColor(255, 255, 255, 40))
+        painter.drawPath(path)
+        super().paintEvent(event)
+
+    def show_near_cursor(self):
+        pos = QtGui.QCursor.pos()
+        self.move(pos.x() - self.width() // 2, pos.y() - self.height() - 10)
+        self.show()
+        self.raise_()
+        self.activateWindow()
+        # focusOutEvent alone isn't reliable here: this is a Qt.Tool
+        # widget, and clicking the DAG (part of the same main-window focus
+        # chain) doesn't reliably fire a focus-out on us the way a normal
+        # top-level window losing activation would -- this HUD stayed open
+        # after clicking away, confirmed by Sashok. An app-wide mouse
+        # event filter, closing on any press outside our own rect, works
+        # regardless of Nuke's/RDP's focus quirks (this file already has a
+        # history of exactly that kind of quirk -- see the WA_Translucent-
+        # Background and NoFocus-button comments above).
+        QtWidgets.QApplication.instance().installEventFilter(self)
+
+    def hideEvent(self, event):
+        app = QtWidgets.QApplication.instance()
+        if app is not None:
+            app.removeEventFilter(self)
+        super().hideEvent(event)
+
+    def eventFilter(self, obj, event):
+        if event.type() == QtCore.QEvent.MouseButtonPress:
+            try:
+                global_pos = event.globalPosition().toPoint()  # Qt6/PySide6
+            except AttributeError:
+                global_pos = event.globalPos()  # Qt5/PySide2
+            if not self.geometry().contains(global_pos):
+                self.hide()
+        return super().eventFilter(obj, event)
+
+    def focusOutEvent(self, event):
+        self.hide()
+        super().focusOutEvent(event)
+
+    def keyPressEvent(self, event):
+        if event.key() == QtCore.Qt.Key_Escape:
+            self.hide()
+        else:
+            super().keyPressEvent(event)
+
+
+def show_version_hud():
+    """Triggered by the Nuke-side hotkey (see register_menu). Stays open
+    after a button click (unlike show_layer_picker) so +/- can be pressed
+    repeatedly to step through versions -- closes on Esc or a click
+    anywhere outside the HUD itself (see eventFilter above)."""
+    global _version_hud
+    _version_hud = _VersionHUD()
+    _version_hud.show_near_cursor()
 
 
 # ---- MCP server control HUD ---------------------------------------------
