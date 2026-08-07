@@ -218,6 +218,61 @@ def _is_sensitive_env_name(name):
     return any(pattern in upper for pattern in SENSITIVE_ENV_NAME_PATTERNS)
 
 
+def cmd_get_node_knobs(payload):
+    """Full knob dump for named nodes (payload["names"], list of node names)
+    or nuke.selectedNodes() if omitted -- for documenting/reverse-engineering
+    an existing comp pattern down to exact knob values (channel mappings,
+    Cryptomatte layer names, etc.), not just topology. Read-only, so no
+    restriction beyond what's already exposed by reading the node in the
+    Properties panel -- same reasoning as get_node_info in the Houdini
+    plugin having no read-side whitelist, only writes are gated.
+
+    payload["only_non_default"] (default True) mirrors the Houdini
+    plugin's only_non_default flag on get_node_info -- skips knobs still
+    at their default value to keep the dump readable. Values come from
+    knob.toScript(), Nuke's own canonical serialization (the same format
+    written to .nk files), so complex knob types (channel lists, matrices)
+    come back reconstructable instead of repr() noise.
+
+    Also reports each node's `inputs` (list of connected node names, None
+    for an empty input) since knob values alone don't show topology."""
+    names = payload.get("names")
+    only_non_default = payload.get("only_non_default", True)
+
+    if names:
+        nodes = [nuke.toNode(n) for n in names]
+        nodes = [n for n in nodes if n is not None]
+    else:
+        nodes = nuke.selectedNodes()
+
+    result = []
+    for n in nodes:
+        knobs = {}
+        for kname, k in n.knobs().items():
+            if only_non_default:
+                try:
+                    if not k.notDefault():
+                        continue
+                except Exception:
+                    pass  # some knob types don't support notDefault() -- include them
+            try:
+                knobs[kname] = k.toScript()
+            except Exception:
+                try:
+                    knobs[kname] = str(k.value())
+                except Exception:
+                    knobs[kname] = None
+
+        inputs = []
+        for i in range(n.inputs()):
+            inp = n.input(i)
+            inputs.append(inp.name() if inp else None)
+
+        result.append({"name": n.name(), "class": n.Class(), "knobs": knobs, "inputs": inputs})
+
+    return {"nodes": result}
+
+
 def cmd_get_env(payload):
     """os.environ entries whose key startswith(payload["prefix"]). Scaffold-
     phase note: an empty/omitted prefix returns the ENTIRE environment --
@@ -244,6 +299,7 @@ DISPATCH = {
     "list_nodes": cmd_list_nodes,
     "get_nodes_in_view": cmd_get_nodes_in_view,
     "get_selected_nodes": cmd_get_selected_nodes,
+    "get_node_knobs": cmd_get_node_knobs,
     "get_env": cmd_get_env,
     "execute_code": cmd_execute_code,
 }

@@ -262,6 +262,31 @@ def nuke_get_selected_nodes(ctx: Context, node_class: str = None) -> str:
         return f"Server Error getting selected nodes: {str(e)}"
 
 @mcp.tool()
+def nuke_get_node_knobs(ctx: Context, names: list = None, only_non_default: bool = True) -> str:
+    """Full knob dump (values via knob.toScript()) plus connected inputs
+    for the given node names, or the current Node Graph selection if
+    `names` is omitted. Use this to capture the exact settings of an
+    existing comp pattern (channel mappings, Cryptomatte layer names,
+    etc.), not just its topology -- e.g. for documenting a reusable
+    layer-branch assembly. only_non_default=True (default) skips knobs
+    still at their default value."""
+    try:
+        conn = get_nuke_connection()
+        params = {"only_non_default": only_non_default}
+        if names:
+            params["names"] = names
+        response = conn.send_command("get_node_knobs", params)
+        if not response.get("ok"):
+            origin = response.get('origin', 'nuke')
+            return f"Error ({origin}): {response.get('error', 'Unknown error')}"
+        return json.dumps(response, indent=2)
+    except ConnectionError as e:
+        return f"Connection Error getting node knobs: {str(e)}"
+    except Exception as e:
+        logger.error(f"Unexpected error in nuke_get_node_knobs tool: {str(e)}", exc_info=True)
+        return f"Server Error getting node knobs: {str(e)}"
+
+@mcp.tool()
 def nuke_get_env(ctx: Context, prefix: str = "") -> str:
     """Get os.environ entries from the Nuke process whose key starts with
     `prefix`. Empty prefix returns the whole environment -- scaffold phase
