@@ -32,11 +32,15 @@ vfx-mcp/                        ← git repo (github.com/sandalya/vfx-mcp)
 ├── BACKLOG.md                  ← живий список done / TODO / known issues
 ├── .gitignore
 ├── houdini_mcp_server.py       ← Bridge MCP server (host=10.10.10.31)
+├── nuke_mcp_bridge.py          ← Nuke's counterpart bridge (port 9877, see "Nuke MCP bridge" below)
+├── nuke_mcp_plugin.py          ← Canonical local copy of the Nuke-side runtime plugin
+├── nuke_overlay.py             ← Standalone HUD PoC, superseded by the HUD classes now inside nuke_mcp_plugin.py
 ├── .venv/                      ← Python 3.14 venv (gitignored)
 ├── plugin/
 │   └── server.py               ← Канонічна локальна копія runtime-плагіна
 ├── docs/
-│   └── SCENE_ANALYSIS.md       ← Дамп реальної production сцени, parm vocabulary
+│   ├── SCENE_ANALYSIS.md       ← Дамп реальної production сцени, parm vocabulary
+│   └── NUKE_COMP_LAYER_ASSEMBLY.md ← Layer-branch comp pattern that the Nuke tooling automates (Function 1/2)
 ├── notes/
 │   ├── README.md               ← Як працює CD ↔ CC inbox
 │   └── cc_inbox.md             ← (з'являється коли CD пише через forward_to_cc)
@@ -143,6 +147,93 @@ houdinimcp.start_server(host='0.0.0.0')
 | Відключити VPN на локалці | Найшвидший — нічого не доходить до pc137 |
 | Shelf-кнопка `Stop MCP` в Houdini | Зупиняє сервер, Houdini лишається |
 | SSH-команда вбити процес що тримає 9876 | Nuclear (поки не використовується) |
+
+---
+
+## Nuke MCP bridge
+
+Second bridge/plugin pair, same shape as the Houdini one above, running
+alongside it on a separate port. Written in English per this repo's doc
+convention (Ukrainian is for conversation, not for reference docs).
+
+### Topology
+
+```
+Claude Desktop / Claude Code (local)
+    ↓ stdio (MCP), `uv run`
+Bridge: nuke_mcp_bridge.py (local, .venv)
+    ↓ TCP 10.10.10.31:9877
+Nuke plugin: nuke_mcp_plugin.py (PC-137, ~/.nuke/)
+    ↓ PySide6 (Nuke 16 is itself a Qt app — no separate process)
+Nuke 16.0v5 (script, DAG, hotkey HUDs)
+```
+
+- Same VPN path as Houdini (10.10.11.41 ↔ 10.10.10.31), separate port so both plugins run at once.
+- `menu.py` on pc137 calls `nuke_mcp_plugin.register_menu()` at Nuke startup — hotkeys/menu items exist on a clean session, no manual step.
+- Socket server itself is **manual start only** (mirrors Houdini's "no auto-start" rule) — started/stopped from the MCP HUD (`Ctrl+Shift+T`), not on Nuke launch.
+- Audit log on pc137: `C:\Users\Admin\nuke_mcp_audit.log` (every command: timestamp, ip, cmd, payload, ok). Every command also prints live to Nuke's Script Editor for on-the-spot debugging.
+
+### Status: scaffold phase — not hardened yet
+
+Unlike the Houdini plugin, this one has **no IP allowlist and no command
+restrictions applied yet**:
+- `ALLOWED_CLIENTS = set()` — empty, so `_handle_client` accepts any IP that can reach port 9877.
+- `_is_allowed(cmd_type, payload)` unconditionally returns `True`.
+- `nuke_execute_code` runs **raw, unsandboxed Python** inside the live Nuke session — intentionally, for now, to unblock the round-trip. It is the Nuke-side equivalent of Houdini's `execute_code`, which is permanently blocked there.
+
+This is a known, deliberate gap while the bridge is still scaffold-only —
+not an oversight. Before this plugin is used from anywhere but this
+dev loop, it needs the same treatment Houdini already got: an IP
+allowlist and a narrow whitelisted command set replacing free-form
+`execute_code`. Per the safety rules at the top of this doc, don't
+treat `nuke_execute_code` as a stable capability to build on.
+
+### Available MCP tools
+
+Defined in `nuke_mcp_bridge.py`, relayed to the matching `cmd_*` handler in `nuke_mcp_plugin.py`:
+
+| Tool | Purpose |
+|------|---------|
+| `nuke_ping` | Liveness check |
+| `nuke_get_script_info` | Script name, node count, frame range |
+| `nuke_list_nodes` | All nodes, optional `node_class` filter |
+| `nuke_get_nodes_in_view` | Nodes inside the current Node Graph viewport (pan/zoom-aware), each flagged `in_view` |
+| `nuke_get_selected_nodes` | Current DAG selection; `Read` nodes also report their `file` knob |
+| `nuke_get_node_knobs` | Full knob dump (`knob.toScript()`) + inputs, for named nodes or current selection; `only_non_default=True` by default |
+| `nuke_get_env` | `os.environ` by prefix; keys matching `KEY`/`TOKEN`/`SECRET`/`PASSWORD`/`PWD`/`CREDENTIAL`/`AUTH`/`COOKIE` (case-insensitive) are redacted — added after a real `FTRACK_API_KEY` leak was caught live |
+| `nuke_list_render_dir` | Lists a render-share directory (default `$FTRACK_RENDER_PATH`) from the Nuke/pc137 side — this bridge's own host has no working SMB access to the share |
+| `nuke_execute_code` | ⚠️ Raw Python exec, unrestricted — see scaffold-phase warning above |
+
+### Nuke-native hotkeys (Function 1 / Function 2)
+
+These automate the layer-branch comp pattern documented in
+`docs/NUKE_COMP_LAYER_ASSEMBLY.md` — read that doc before touching any
+of this code. Registered Nuke-side via `register_menu()` under
+`Little Helpers/...`, reload-safe (`importlib.reload` runs on every
+press, by design, so edit → deploy → press hotkey is the whole dev
+loop — no Nuke restart needed). An OS-level global hotkey (the
+`keyboard` package's low-level keyboard hook) was tried first and
+never fired, most likely swallowed by AV/EDR since that hook shape is
+exactly what keyloggers use — hence hotkeys live inside Nuke itself.
+
+| Hotkey | Function | What it does |
+|--------|----------|---------------|
+| `Shift+A` | Function 1 — layer-branch init | Opens a picker HUD listing layer-branches from `list_render_dir`; picking one calls `build_layer_branch(layer_name)`, which builds the full confirmed 4-Read init template (`ShuffleCopy4/9/11 → Copy16 → ShuffleCopy12 → empty Cryptomatte → Copy24 → StickyNote`), with per-pass version/frame-range auto-resolution and a gap check that flags incomplete sequences on the Read node itself |
+| `Shift+D` | Function 2 — version stepping | Opens `_VersionHUD` ("Latest version" / "Version +" / "Version -") acting on selected `Read` nodes, falling back to whatever's visible in the viewport if nothing is selected. Each Read is resolved and bumped independently against its own (layer, pass). Keeps a row of disconnected history Reads in sync alongside the live one (`_HISTORY_COUNTS = {"lights": 1, "beauty": 5}`), and shows a live status panel (OK / outdated / missing-frames tags) |
+| `Ctrl+Shift+T` | MCP HUD | Start / Restart / Stop the socket server, shows current status |
+
+### Deploy
+
+`scripts/deploy_plugin.sh` takes a target now: `<houdini|nuke|all>` —
+backs up the previous version on pc137 before copying, same as the
+Houdini flow. Reload in a live Nuke session doesn't need a restart:
+pressing any of the hotkeys above re-imports the module.
+
+### Kill switches
+
+Same options as Houdini: disconnect the local VPN (fastest), or hit
+Stop in the MCP HUD (`Ctrl+Shift+T`). There is no OS-level hook to
+worry about — see the hotkey note above.
 
 ---
 
