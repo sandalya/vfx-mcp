@@ -182,12 +182,45 @@ def cmd_execute_code(payload):
     return {"result": repr(local_ns.get("result"))}
 
 
+def cmd_get_selected_nodes(payload):
+    """Nodes currently selected in the Node Graph. Optional payload["class"]
+    filters by class (e.g. "Read"), mirroring cmd_list_nodes. Read-class
+    nodes additionally report their `file` knob -- the anchor point later
+    branch-detection work needs (selection -> disk path)."""
+    node_class = payload.get("class")
+    selected = nuke.selectedNodes(node_class) if node_class else nuke.selectedNodes()
+
+    nodes = []
+    for n in selected:
+        entry = {"name": n.name(), "class": n.Class()}
+        if n.Class() == "Read":
+            try:
+                entry["file"] = n["file"].value()
+            except Exception:
+                entry["file"] = None
+        nodes.append(entry)
+    return {"nodes": nodes}
+
+
+def cmd_get_env(payload):
+    """os.environ entries whose key startswith(payload["prefix"]). Scaffold-
+    phase note: an empty/omitted prefix returns the ENTIRE environment --
+    intentionally permissive for now (matches _is_allowed()'s "allow
+    everything" stance), so pass a specific prefix unless you really want
+    everything dumped."""
+    prefix = payload.get("prefix", "")
+    env = {k: v for k, v in os.environ.items() if k.startswith(prefix)}
+    return {"env": env}
+
+
 DISPATCH = {
     "ping": cmd_ping,
     "print": cmd_print,
     "get_script_info": cmd_get_script_info,
     "list_nodes": cmd_list_nodes,
     "get_nodes_in_view": cmd_get_nodes_in_view,
+    "get_selected_nodes": cmd_get_selected_nodes,
+    "get_env": cmd_get_env,
     "execute_code": cmd_execute_code,
 }
 
@@ -207,6 +240,7 @@ DISPATCH = {
 # this file, deploy, press the hotkey. No menu.py edits, no Nuke restart.
 
 MENU_PATH = "Little Helpers/Unused/Quick Print Test"
+MCP_MENU_PATH = "Little Helpers/MCP Server"
 
 # Bump this by hand and redeploy to prove the reload loop actually picks
 # up new code, without restarting Nuke.
@@ -235,6 +269,15 @@ def register_menu():
         "ctrl+shift+a",
     )
 
+    if menu.findItem(MCP_MENU_PATH):
+        menu.removeItem(MCP_MENU_PATH)
+    menu.addCommand(
+        MCP_MENU_PATH,
+        "import importlib, nuke_mcp_plugin; importlib.reload(nuke_mcp_plugin); "
+        "nuke_mcp_plugin.toggle_mcp_hud()",
+        "ctrl+shift+t",
+    )
+
 
 # ---- transparent HUD ----------------------------------------------------
 # Nuke is itself a Qt app (PySide6 as of Nuke 16), so the HUD widget runs
@@ -259,7 +302,15 @@ class _PrintHUD(QtWidgets.QWidget):
         self.setWindowFlags(
             QtCore.Qt.FramelessWindowHint | QtCore.Qt.WindowStaysOnTopHint | QtCore.Qt.Tool
         )
-        self.setAttribute(QtCore.Qt.WA_TranslucentBackground)
+        # No WA_TranslucentBackground: that renders via a per-pixel-alpha
+        # layered window (UpdateLayeredWindow on Windows), and over RDP to
+        # pc137 that combo reliably ate mouse clicks while keyboard events
+        # (Esc, arrow keys) still reached the widget fine -- consistent
+        # with known RDP/DWM issues where layered-window hit-testing gets
+        # lost in the remoting pipeline even though painting still works.
+        # setMask() below gives the same rounded silhouette through a
+        # plain GDI window region instead, which RDP treats like any other
+        # opaque window (real OS-level hit-testing, no alpha involved).
         self.setAttribute(QtCore.Qt.WA_DeleteOnClose, False)
 
         self.setStyleSheet("""
@@ -298,6 +349,11 @@ class _PrintHUD(QtWidgets.QWidget):
         layout.addWidget(self.input)
 
         btn = QtWidgets.QPushButton("Print to Script Editor")
+        # NoFocus so a click doesn't steal focus from self.input and, on
+        # _McpHud's buttons, from the top-level widget itself -- see the
+        # detailed root-cause comment above the "MCP server control HUD"
+        # section below.
+        btn.setFocusPolicy(QtCore.Qt.NoFocus)
         btn.clicked.connect(self.send_print)
         layout.addWidget(btn)
 
@@ -307,12 +363,18 @@ class _PrintHUD(QtWidgets.QWidget):
 
         self.resize(260, 130)
 
+    def resizeEvent(self, event):
+        path = QtGui.QPainterPath()
+        path.addRoundedRect(QtCore.QRectF(self.rect()), 12, 12)
+        self.setMask(QtGui.QRegion(path.toFillPolygon().toPolygon()))
+        super().resizeEvent(event)
+
     def paintEvent(self, event):
         painter = QtGui.QPainter(self)
         painter.setRenderHint(QtGui.QPainter.Antialiasing)
         path = QtGui.QPainterPath()
         path.addRoundedRect(self.rect().adjusted(1, 1, -1, -1), 12, 12)
-        painter.fillPath(path, QtGui.QColor(25, 25, 28, 215))
+        painter.fillPath(path, QtGui.QColor(25, 25, 28, 255))
         painter.setPen(QtGui.QColor(255, 255, 255, 40))
         painter.drawPath(path)
         super().paintEvent(event)
@@ -353,6 +415,175 @@ def show_hud():
     if _hud is None:
         _hud = _PrintHUD()
     _hud.show_near_cursor()
+
+
+# ---- MCP server control HUD ---------------------------------------------
+# Start/Restart/Stop, rebuilt on 2026-08-07 on top of a minimal single-
+# button version that isolated the real click bug: QPushButton's default
+# focus policy takes keyboard focus on click, show_near_cursor() below
+# puts focus on `self` (the top-level widget, nothing else to hold it) --
+# so a click transferred focus from self to the button, firing
+# self.focusOutEvent() -> self.hide() mid-click, before mouseReleaseEvent
+# could complete the button's press-release gesture. clicked() never got
+# emitted; the window was already gone by the time the release happened.
+# Every button below sets NoFocus to stop that. (Red herring ruled out
+# along the way: WA_TranslucentBackground/layered-window RDP hit-testing
+# -- that was never the actual problem, though the setMask() rounded-
+# corner approach it left behind is harmless and stays.)
+#
+# _mcp_hud used to be deliberately reload-safe (`if '_mcp_hud' not in
+# globals()`) so toggle_mcp_hud() could tell whether the HUD was still
+# visible from the *previous* press and close it on a second press. That
+# backfired during active iteration: since every hotkey press reloads this
+# module first, the surviving _mcp_hud kept pointing at the OLD widget
+# instance built by the OLD __init__ -- reload() replaces the code in the
+# module namespace, but an already-constructed object doesn't get rebuilt,
+# so the stale Start/Restart/Stop layout kept showing no matter how many
+# times the file was redeployed and reloaded. Simpler and matches `_hud`
+# above now: always build a fresh instance. Costs the press-to-close
+# toggle (Esc still closes) but guarantees the latest code is what's on
+# screen.
+
+_mcp_hud = None
+
+
+class _McpHud(QtWidgets.QWidget):
+    def __init__(self):
+        super().__init__()
+        self.setWindowFlags(
+            QtCore.Qt.FramelessWindowHint | QtCore.Qt.WindowStaysOnTopHint | QtCore.Qt.Tool
+        )
+        self.setAttribute(QtCore.Qt.WA_DeleteOnClose, False)
+
+        self.setStyleSheet("""
+            QPushButton {
+                background-color: rgba(70, 130, 220, 210);
+                color: white;
+                border: none;
+                border-radius: 6px;
+                padding: 8px 18px;
+                font-weight: 600;
+                font-size: 11px;
+            }
+            QPushButton:hover { background-color: rgba(90, 150, 240, 230); }
+            QPushButton:pressed { background-color: rgba(50, 100, 180, 230); }
+            #stopBtn { background-color: rgba(210, 80, 70, 210); }
+            #stopBtn:hover { background-color: rgba(230, 100, 90, 230); }
+            #stopBtn:pressed { background-color: rgba(180, 60, 50, 230); }
+            #status { color: rgba(150, 220, 150, 230); font-size: 10px; }
+        """)
+
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(6)
+
+        start_btn = QtWidgets.QPushButton("Start")
+        start_btn.setFocusPolicy(QtCore.Qt.NoFocus)
+        start_btn.clicked.connect(self._do_start)
+        layout.addWidget(start_btn)
+
+        restart_btn = QtWidgets.QPushButton("Restart")
+        restart_btn.setFocusPolicy(QtCore.Qt.NoFocus)
+        restart_btn.clicked.connect(self._do_restart)
+        layout.addWidget(restart_btn)
+
+        stop_btn = QtWidgets.QPushButton("Stop")
+        stop_btn.setObjectName("stopBtn")
+        stop_btn.setFocusPolicy(QtCore.Qt.NoFocus)
+        stop_btn.clicked.connect(self._do_stop)
+        layout.addWidget(stop_btn)
+
+        self.status = QtWidgets.QLabel("")
+        self.status.setObjectName("status")
+        self.status.setAlignment(QtCore.Qt.AlignCenter)
+        layout.addWidget(self.status)
+
+        self.resize(140, 150)
+
+    def resizeEvent(self, event):
+        path = QtGui.QPainterPath()
+        path.addRoundedRect(QtCore.QRectF(self.rect()), 12, 12)
+        self.setMask(QtGui.QRegion(path.toFillPolygon().toPolygon()))
+        super().resizeEvent(event)
+
+    def paintEvent(self, event):
+        painter = QtGui.QPainter(self)
+        painter.setRenderHint(QtGui.QPainter.Antialiasing)
+        path = QtGui.QPainterPath()
+        path.addRoundedRect(self.rect().adjusted(1, 1, -1, -1), 12, 12)
+        painter.fillPath(path, QtGui.QColor(25, 25, 28, 255))
+        painter.setPen(QtGui.QColor(255, 255, 255, 40))
+        painter.drawPath(path)
+        super().paintEvent(event)
+
+    def _do_start(self):
+        already = _server_thread is not None and _server_thread.is_alive()
+        start_server()
+        self._flash("already running" if already else "started ✓")
+
+    def _do_restart(self):
+        stop_server()
+        start_server()
+        self._flash("restarted ✓")
+
+    def _do_stop(self):
+        was_running = _server_thread is not None and _server_thread.is_alive()
+        stop_server()
+        self._flash("stopped ✓" if was_running else "was not running")
+
+    def _flash(self, text):
+        """Immediate feedback right on the HUD -- doesn't depend on the
+        Script Editor being visible or on background-thread prints landing
+        (see the executeInMainThreadWithResult note in _serve())."""
+        self.status.setText(text)
+        QtCore.QTimer.singleShot(700, self.hide)
+
+    def show_near_cursor(self):
+        pos = QtGui.QCursor.pos()
+        # Centered on the cursor in both axes -- with Start/Restart/Stop
+        # stacked in that order, this puts Restart (the middle button)
+        # closest to the cursor's actual position.
+        self.move(pos.x() - self.width() // 2, pos.y() - self.height() // 2)
+        self.status.setText("")
+        self.show()
+        self.raise_()
+        self.activateWindow()
+        self.setFocus()
+
+    def focusOutEvent(self, event):
+        self.hide()
+        super().focusOutEvent(event)
+
+    def keyPressEvent(self, event):
+        # Keyboard fallback, kept alongside the now-working mouse path --
+        # Up = Start (above cursor), Down = Stop (below), Enter/Space =
+        # Restart (the one at the cursor).
+        key = event.key()
+        if key == QtCore.Qt.Key_Escape:
+            self.hide()
+        elif key == QtCore.Qt.Key_Up:
+            self._do_start()
+        elif key == QtCore.Qt.Key_Down:
+            self._do_stop()
+        elif key in (QtCore.Qt.Key_Return, QtCore.Qt.Key_Enter, QtCore.Qt.Key_Space):
+            self._do_restart()
+        else:
+            super().keyPressEvent(event)
+
+
+def show_mcp_hud():
+    """Always builds a fresh _McpHud -- see the comment above _mcp_hud for
+    why reusing an instance across reloads was actively harmful during
+    iteration."""
+    global _mcp_hud
+    _mcp_hud = _McpHud()
+    _mcp_hud.show_near_cursor()
+
+
+def toggle_mcp_hud():
+    """Named for the menu/hotkey wiring (register_menu() calls this by
+    name) -- no longer an actual open/close toggle, see show_mcp_hud()."""
+    show_mcp_hud()
 
 
 # ---- socket server ----------------------------------------------------
@@ -410,17 +641,45 @@ def _handle_client(conn, addr):
 
 
 def _serve():
+    global _server_socket
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     srv.bind((HOST, PORT))
     srv.listen(5)
-    print(f"nuke-mcp listening on {HOST}:{PORT}")
-    while True:
-        conn, addr = srv.accept()
-        threading.Thread(target=_handle_client, args=(conn, addr), daemon=True).start()
+    _server_socket = srv
+    # print() from this background thread doesn't reach the Script Editor --
+    # only the main thread's stdout is captured there (see _handle_client's
+    # use of the same executeInMainThreadWithResult(_print_to_editor, ...)
+    # trick for the same reason).
+    nuke.executeInMainThreadWithResult(_print_to_editor, (f"nuke-mcp listening on {HOST}:{PORT}",))
+    try:
+        while True:
+            try:
+                conn, addr = srv.accept()
+            except OSError:
+                if _stop_requested.is_set():
+                    # stop_server() closed srv on purpose to unblock accept()
+                    # -- not an error, exit quietly.
+                    break
+                raise
+            threading.Thread(target=_handle_client, args=(conn, addr), daemon=True).start()
+    finally:
+        _server_socket = None
+        nuke.executeInMainThreadWithResult(_print_to_editor, ("nuke-mcp server stopped",))
 
 
-_server_thread = None
+# Reload-safe: importlib.reload() re-runs this module's top level in place,
+# so a plain `_server_thread = None` here would sever the reference to a
+# LIVE server thread/socket every time the module gets reloaded (which
+# happens on every hotkey/menu press, per the dev-loop pattern above) --
+# not just when Stop is actually clicked. Guard against re-init so reload
+# only picks up new function/class code, never wipes live server state.
+if '_server_thread' not in globals():
+    _server_thread = None
+if '_server_socket' not in globals():
+    _server_socket = None
+if '_stop_requested' not in globals():
+    _stop_requested = threading.Event()
 
 
 def start_server():
@@ -428,5 +687,23 @@ def start_server():
     if _server_thread and _server_thread.is_alive():
         print("nuke-mcp already running")
         return
+    _stop_requested.clear()
     _server_thread = threading.Thread(target=_serve, daemon=True)
     _server_thread.start()
+
+
+def stop_server():
+    global _server_thread
+    if not (_server_thread and _server_thread.is_alive()):
+        print("nuke-mcp not running")
+        return
+    _stop_requested.set()
+    if _server_socket is not None:
+        try:
+            _server_socket.close()
+        except OSError:
+            pass
+    _server_thread.join(timeout=2.0)
+    if _server_thread.is_alive():
+        print("nuke-mcp: server thread did not stop within 2s")
+    _server_thread = None

@@ -243,6 +243,45 @@ def nuke_get_nodes_in_view(ctx: Context, node_class: str = None) -> str:
         return f"Server Error getting nodes in view: {str(e)}"
 
 @mcp.tool()
+def nuke_get_selected_nodes(ctx: Context, node_class: str = None) -> str:
+    """List nodes currently selected in the Nuke Node Graph, optionally
+    filtered by class (e.g. 'Read'). Read-class nodes additionally report
+    their 'file' knob value."""
+    try:
+        conn = get_nuke_connection()
+        params = {"class": node_class} if node_class else {}
+        response = conn.send_command("get_selected_nodes", params)
+        if not response.get("ok"):
+            origin = response.get('origin', 'nuke')
+            return f"Error ({origin}): {response.get('error', 'Unknown error')}"
+        return json.dumps(response, indent=2)
+    except ConnectionError as e:
+        return f"Connection Error getting selected nodes: {str(e)}"
+    except Exception as e:
+        logger.error(f"Unexpected error in nuke_get_selected_nodes tool: {str(e)}", exc_info=True)
+        return f"Server Error getting selected nodes: {str(e)}"
+
+@mcp.tool()
+def nuke_get_env(ctx: Context, prefix: str = "") -> str:
+    """Get os.environ entries from the Nuke process whose key starts with
+    `prefix`. Empty prefix returns the whole environment -- scaffold phase
+    is intentionally permissive here, so pass a specific prefix unless you
+    really want everything dumped."""
+    try:
+        conn = get_nuke_connection()
+        params = {"prefix": prefix} if prefix else {}
+        response = conn.send_command("get_env", params)
+        if not response.get("ok"):
+            origin = response.get('origin', 'nuke')
+            return f"Error ({origin}): {response.get('error', 'Unknown error')}"
+        return json.dumps(response, indent=2)
+    except ConnectionError as e:
+        return f"Connection Error getting env: {str(e)}"
+    except Exception as e:
+        logger.error(f"Unexpected error in nuke_get_env tool: {str(e)}", exc_info=True)
+        return f"Server Error getting env: {str(e)}"
+
+@mcp.tool()
 def nuke_execute_code(ctx: Context, code: str) -> str:
     """
     Execute raw Python inside the running Nuke session.
