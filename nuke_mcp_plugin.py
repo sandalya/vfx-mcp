@@ -104,19 +104,18 @@ def cmd_list_nodes(payload):
     return {"nodes": [{"name": n.name(), "class": n.Class()} for n in nodes]}
 
 
-def cmd_get_nodes_in_view(payload):
-    """
-    Which nodes currently fall inside the visible area of the Node Graph
-    panel -- unlike cmd_list_nodes, which returns every node regardless of
-    pan/zoom. Nuke has no built-in "is this node on screen" API, so this
-    reconstructs the viewport rect from nuke.center()/nuke.zoom() (DAG
-    pan/zoom, in world units) and the pixel size of the DAG's Qt widget,
-    then checks each node's bounding box against that rect.
+def _dag_viewport_rect():
+    """(center, zoom, vis_rect) for the frontmost open Node Graph panel --
+    shared by cmd_get_nodes_in_view and the version-stepping "nothing
+    selected" fallback (_working_read_nodes) below. Nuke has no built-in
+    "is this node on screen" API, so this reconstructs the viewport rect
+    from nuke.center()/nuke.zoom() (DAG pan/zoom, in world units) and the
+    pixel size of the DAG's Qt widget.
 
     Caveat: if multiple Node Graph panels/tabs are open, this grabs the
     first "DAG_Window" Qt widget found -- not necessarily the one the user
-    is looking at.
-    """
+    is looking at. Raises RuntimeError if none is found (no Node Graph
+    panel open)."""
     try:
         from PySide2 import QtWidgets
     except ImportError:
@@ -142,6 +141,41 @@ def cmd_get_nodes_in_view(payload):
         "x_min": center[0] - half_w, "x_max": center[0] + half_w,
         "y_min": center[1] - half_h, "y_max": center[1] + half_h,
     }
+    return center, zoom, (w_px, h_px), vis_rect
+
+
+def _nodes_in_view(node_class=None):
+    """Nodes of node_class (or all classes) whose bounding box intersects
+    the visible Node Graph viewport -- see _dag_viewport_rect. Returns
+    Node objects directly (not the JSON-friendly dicts cmd_get_nodes_in_view
+    builds), for in-process callers like _working_read_nodes."""
+    _center, _zoom, _widget_px, vis_rect = _dag_viewport_rect()
+    all_nodes = nuke.allNodes(node_class) if node_class else nuke.allNodes()
+
+    def intersects(x0, y0, x1, y1):
+        return not (x1 < vis_rect["x_min"] or x0 > vis_rect["x_max"]
+                    or y1 < vis_rect["y_min"] or y0 > vis_rect["y_max"])
+
+    result = []
+    for n in all_nodes:
+        try:
+            sw, sh = n.screenWidth(), n.screenHeight()
+        except Exception:
+            sw, sh = 80, 18
+        x, y = n.xpos(), n.ypos()
+        if intersects(x, y, x + sw, y + sh):
+            result.append(n)
+    return result
+
+
+def cmd_get_nodes_in_view(payload):
+    """
+    Which nodes currently fall inside the visible area of the Node Graph
+    panel -- unlike cmd_list_nodes, which returns every node regardless of
+    pan/zoom. See _dag_viewport_rect for how the viewport rect itself is
+    reconstructed.
+    """
+    center, zoom, (w_px, h_px), vis_rect = _dag_viewport_rect()
 
     node_class = payload.get("class")
     all_nodes = nuke.allNodes(node_class) if node_class else nuke.allNodes()
@@ -766,12 +800,21 @@ def _apply_read_sequence(read, pass_name, version, seq, layer_dir):
     """Set a Read node's file/frame-range knobs from a resolved (version,
     seq) pair, and flag missing frames (orange tile_color + label) instead
     of silently building a wrong range. Shared by build_layer_branch (new
-    Read nodes) and _bump_read_version (existing ones)."""
+    Read nodes) and _bump_read_version (existing ones).
+
+    postage_stamp defaults off here -- with a full layer-branch (4 live
+    Reads) plus up to 6 history Reads per branch, leaving every one of
+    them generating a live thumbnail every frame change is a real
+    playback-performance hit. The two call sites that build/bump the
+    *live* beauty Read (the one artists actually look at) turn it back on
+    afterward -- everything else (lights/tech/crypto, and every history
+    Read regardless of pass) stays off."""
     read["file"].setValue(f"{layer_dir}/{version}/{seq['pattern']}")
     read["first"].setValue(seq["first"])
     read["last"].setValue(seq["last"])
     read["origfirst"].setValue(seq["first"])
     read["origlast"].setValue(seq["last"])
+    read["postage_stamp"].setValue(False)
 
     if seq["missing"]:
         missing_preview = ", ".join(str(f) for f in seq["missing"][:8])
@@ -820,6 +863,9 @@ def build_layer_branch(layer_name):
         version, seq = _resolve_pass(layer_dir, pass_name)
         read = make("Read")
         _apply_read_sequence(read, pass_name, version, seq, layer_dir)
+        if pass_name == "beauty":
+            read["postage_stamp"].setValue(True)  # the one Read artists
+            # actually look at -- everything else in the branch stays off
         reads[pass_name] = read
 
     # Relative (dx, dy) offsets lifted directly from the captured sh320/bg
@@ -928,60 +974,259 @@ def _parse_read_file(file_value):
     return m.group("layer_dir"), m.group("version"), m.group("pass_name")
 
 
+_HISTORY_COUNTS = {"lights": 1, "beauty": 5}  # .get(pass_name, 0) -- 0
+# (tech/crypto, or anything unrecognized) means "no history row for this
+# pass". Matches the row of disconnected old-version Read nodes Sashok
+# already builds by hand next to a live branch (confirmed on sh320/bg:
+# 5 old beauty Reads, 1 old lights Read, none for tech/crypto).
+
+_HISTORY_SPACING = 110  # px between history-node slots, cosmetic only --
+# splits the difference between the two spacings actually observed on disk
+# (a hand-built history lights Read sat -116px from its live Read, a
+# history beauty Read -108/-109px from its live Read). Safe to retune:
+# these are disconnected reference nodes, moving them changes nothing.
+
+_HISTORY_TILE_COLOR = 0x2E3B4EFF  # muted blue-gray -- distinguishes a
+# history node from a live Read (default tile_color) at a glance, but
+# applied only when that node's own sequence has no missing frames --
+# the orange missing-frames flag _apply_read_sequence sets takes priority.
+
+
+def _is_live_read(read):
+    """True if read feeds something other than a Viewer. A plain
+    node.dependent() check isn't enough on its own -- confirmed live:
+    Read7 (a beauty history Read, tile_color already the history-node
+    gray, postage_stamp already off) was still reported as "live" and got
+    flagged/bumped, because Sashok had it plugged into a Viewer for visual
+    comparison -- exactly the normal, expected use of a history Read.
+    Viewer connections don't make a Read part of the actual comp, so they
+    don't count here."""
+    return any(d.Class() != "Viewer" for d in read.dependent())
+
+
+def _working_read_nodes():
+    """Read nodes version-stepping operates on: the current selection if
+    there is one, else every Read node visible in the current Node Graph
+    viewport (see _nodes_in_view) -- framing the view on a branch becomes
+    an implicit "work on this" the same way explicitly selecting nodes
+    does, per Sashok's ask. Further filtering (_is_live_read, the file-
+    path convention) stays on the callers, same as it already was for an
+    explicit selection."""
+    selected = nuke.selectedNodes()
+    if selected:
+        return [n for n in selected if n.Class() == "Read"]
+    try:
+        return _nodes_in_view("Read")
+    except Exception as e:
+        print(f"_working_read_nodes: nodes-in-view fallback failed -- {e}")
+        return []
+
+
+def _history_candidates(live_read, layer_dir, pass_name):
+    """Read nodes elsewhere in the script that show the same (layer_dir,
+    pass_name) as live_read but aren't it and have nothing downstream --
+    i.e. the orphaned history/comparison Reads artists already build by
+    hand (docs/NUKE_COMP_LAYER_ASSEMBLY.md: 'old versions are not
+    deleted'). Deliberately NOT name-based -- Nuke's auto-numbered
+    Read78/Read77 etc. carry no semantic meaning, only file path + graph
+    topology do. A node counts as orphaned iff _is_live_read() is False --
+    the same thing you'd check by eye to tell a live Read from a history
+    one. Sorted by descending xpos so index 0 is closest to live_read
+    (highest version-below-current slot)."""
+    candidates = []
+    for n in nuke.allNodes("Read"):
+        if n is live_read:
+            continue
+        parsed = _parse_read_file(n["file"].value())
+        if parsed is None:
+            continue
+        n_layer_dir, _n_version, n_pass_name = parsed
+        if n_layer_dir != layer_dir or n_pass_name != pass_name:
+            continue
+        if _is_live_read(n):
+            continue
+        candidates.append(n)
+    candidates.sort(key=lambda n: -n.xpos())
+    return candidates
+
+
+def _sync_history_reads(live_read, layer_dir, pass_name, current_num):
+    """Called after a successful version bump on a beauty/lights live Read
+    (see _HISTORY_COUNTS) to keep its row of old-version Read nodes in
+    sync. _bump_read_version mutates live_read's own knobs in place rather
+    than creating a new node, so there's no stored record of "what used to
+    be live" to diff against -- every call re-derives the desired version
+    list from disk instead of trying to track it. Reuses existing
+    orphaned Reads first (adopting hand-built ones the first time this
+    ever runs on a branch), creates new Read nodes only for any shortfall,
+    and never deletes a node even if more orphans exist than currently
+    wanted -- deletion needs its own explicit confirmation, out of scope
+    here."""
+    wanted = _HISTORY_COUNTS.get(pass_name, 0)
+    if wanted <= 0:
+        return
+
+    versions = _available_versions(layer_dir, pass_name)  # ascending
+    below = [v for v in versions if v[0] < current_num]
+    targets = below[-wanted:]  # top `wanted` versions strictly below current
+    targets.reverse()          # descending: targets[0] = closest-to-live
+
+    candidates = _history_candidates(live_read, layer_dir, pass_name)
+
+    for rank, (_version_num, version_name) in enumerate(targets, start=1):
+        node = candidates[rank - 1] if rank - 1 < len(candidates) else \
+            nuke.createNode("Read", inpanel=False)
+
+        node.setXYpos(live_read.xpos() - rank * _HISTORY_SPACING, live_read.ypos())
+
+        seq = _collapse_sequence(f"{layer_dir}/{version_name}", pass_name)
+        _apply_read_sequence(node, pass_name, version_name, seq, layer_dir)
+        if not seq["missing"]:
+            node["tile_color"].setValue(_HISTORY_TILE_COLOR)
+
+
 def _bump_read_version(read, direction):
-    """direction: "latest" | "up" | "down". Returns (status, detail)
-    where status is "updated" or "skipped"."""
+    """direction: "latest" | "up" | "down". Returns (status, detail,
+    parsed) where status is "updated" or "skipped", and parsed is
+    (layer_dir, pass_name, target_num) on "updated" else None -- handed
+    back so the caller can sync history Reads (see _sync_history_reads)
+    without re-parsing the now-mutated file knob."""
     file_value = read["file"].value()
     parsed = _parse_read_file(file_value)
     if parsed is None:
-        return "skipped", "unrecognized path"
+        return "skipped", "unrecognized path", None
     layer_dir, current_version, pass_name = parsed
 
     versions = _available_versions(layer_dir, pass_name)
     if not versions:
-        return "skipped", "no versions found on disk"
+        return "skipped", "no versions found on disk", None
 
     current_num = int(_VERSION_DIR_RE.match(current_version).group(1))
-    nums = [n for n, _ in versions]
 
     if direction == "latest":
         target_num, target_vname = versions[-1]
         if target_num == current_num:
-            return "skipped", "already at latest"
+            return "skipped", "already at latest", None
     elif direction == "up":
         higher = [(n, v) for n, v in versions if n > current_num]
         if not higher:
-            return "skipped", "no higher version available"
+            return "skipped", "no higher version available", None
         target_num, target_vname = higher[0]
     elif direction == "down":
         lower = [(n, v) for n, v in versions if n < current_num]
         if not lower:
-            return "skipped", "no lower version available"
+            return "skipped", "no lower version available", None
         target_num, target_vname = lower[-1]
     else:
         raise ValueError(f"unknown direction {direction!r}")
 
     seq = _collapse_sequence(f"{layer_dir}/{target_vname}", pass_name)
     _apply_read_sequence(read, pass_name, target_vname, seq, layer_dir)
-    return "updated", f"{current_version} -> {target_vname}"
+    if pass_name == "beauty":
+        read["postage_stamp"].setValue(True)  # this is the live main Read,
+        # not a history one -- see _apply_read_sequence's postage_stamp note
+    return "updated", f"{current_version} -> {target_vname}", (layer_dir, pass_name, target_num)
 
 
 def bump_selected_reads(direction):
-    """Triggered by a _VersionHUD button. Acts on nuke.selectedNodes(),
-    filtered to Read nodes, each resolved independently -- prints a one-
-    line summary to the Script Editor (same feedback channel used
-    elsewhere in this file; no info-panel wiring yet, see _VersionHUD)."""
-    reads = [n for n in nuke.selectedNodes() if n.Class() == "Read"]
+    """Triggered by a _VersionHUD button. Acts on _working_read_nodes()
+    (current selection, or everything visible in the Node Graph viewport
+    if nothing's selected), filtered to Read nodes, each resolved
+    independently -- prints a one-line summary to the Script Editor (same
+    feedback channel used elsewhere in this file). Also keeps each
+    bumped beauty/lights Read's history row in sync (see
+    _sync_history_reads), and restores the original graph selection
+    afterward: nuke.createNode() (used there when a new history node is
+    needed) resets the selection as a side effect, which would otherwise
+    leave the artist's selection pointing at a random history Read
+    instead of what they actually picked -- and _VersionHUD's status
+    refresh reads _working_read_nodes() right after this returns, so a
+    wrong selection there would report on the wrong nodes too."""
+    original_selection = nuke.selectedNodes()
+    reads = _working_read_nodes()
     updated = 0
     skipped = 0
     for read in reads:
-        status, detail = _bump_read_version(read, direction)
+        if not _is_live_read(read):
+            # Not live -- nothing downstream, so this is itself a history/
+            # reference Read (docs/NUKE_COMP_LAYER_ASSEMBLY.md's "old
+            # versions kept, not deleted" pattern). History Reads sit right
+            # next to their live sibling, so a box-select/shift-click on
+            # the branch easily grabs them too -- bumping one directly
+            # would make it its own "live" head, and _sync_history_reads
+            # would then build IT a history row too, cascading extra
+            # nodes (confirmed live: a co-selected old history Read spun
+            # off its own history chain). Skip outright rather than only
+            # skipping the sync, so a stray history Read's own version
+            # never changes underneath the artist either.
+            skipped += 1
+            print(f"bump_selected_reads({direction!r}): {read.name()} skipped -- "
+                  f"not live (no downstream connections, looks like a history Read)")
+            continue
+        status, detail, parsed = _bump_read_version(read, direction)
         if status == "updated":
             updated += 1
+            layer_dir, pass_name, target_num = parsed
+            if _HISTORY_COUNTS.get(pass_name, 0) > 0:
+                _sync_history_reads(read, layer_dir, pass_name, target_num)
         else:
             skipped += 1
         print(f"bump_selected_reads({direction!r}): {read.name()} {status} -- {detail}")
     print(f"bump_selected_reads({direction!r}): {updated} updated, {skipped} skipped")
+
+    for n in nuke.selectedNodes():
+        n.setSelected(False)
+    for n in original_selection:
+        n.setSelected(True)
+
+
+def _read_status(read):
+    """Outdated / missing-frames / shot-range-incomplete flags for a
+    single Read, reusing the same convention-parsing + disk scan
+    _bump_read_version already does. Returns None for Read nodes that
+    don't match the layer-branch file convention at all.
+
+    "incomplete" is the check _collapse_sequence's missing-frames list
+    can't do on its own: a Read whose file knob only ever pointed at one
+    rendered frame (first == last, no internal gap possible) still might
+    cover only 1 of the shot's N frames -- confirmed live on sh320/bg's
+    beauty Read (v008, first=last=1001 against a 1001-1029 shot range).
+
+    "outdated" is only ever checked for the beauty pass -- per
+    docs/NUKE_COMP_LAYER_ASSEMBLY.md the 4 passes version independently
+    and are routinely NOT lock-step on purpose (e.g. beauty re-rendered
+    for a fix while lights/tech/crypto sit untouched), so flagging
+    lights/tech/crypto as "outdated" whenever beauty moves ahead is just
+    noise, not a real problem -- confirmed by Sashok live (a lights Read
+    a version behind its branch's beauty got flagged and shouldn't have
+    been)."""
+    parsed = _parse_read_file(read["file"].value())
+    if parsed is None:
+        return None
+    layer_dir, current_version, pass_name = parsed
+    current_num = int(_VERSION_DIR_RE.match(current_version).group(1))
+
+    outdated = False
+    latest_vname = current_version
+    if pass_name == "beauty":
+        versions = _available_versions(layer_dir, pass_name)
+        latest_num, latest_vname = versions[-1] if versions else (current_num, current_version)
+        outdated = latest_num > current_num
+
+    seq = _collapse_sequence(f"{layer_dir}/{current_version}", pass_name)
+    root = nuke.root()
+    root_first, root_last = root.firstFrame(), root.lastFrame()
+
+    return {
+        "pass_name": pass_name,
+        "current_version": current_version,
+        "latest_version": latest_vname,
+        "outdated": outdated,
+        "missing": seq["missing"] if seq else [],
+        "incomplete": bool(seq) and (seq["first"] > root_first or seq["last"] < root_last),
+        "seq": seq,
+        "root_range": (root_first, root_last),
+    }
 
 
 _version_hud = None  # rebuilt fresh every open, same reasoning as
@@ -1027,18 +1272,22 @@ class _VersionHUD(QtWidgets.QWidget):
         ):
             btn = QtWidgets.QPushButton(label)
             btn.setFocusPolicy(QtCore.Qt.NoFocus)
-            btn.clicked.connect(lambda checked=False, d=direction: bump_selected_reads(d))
+            btn.clicked.connect(lambda checked=False, d=direction: self._on_bump_clicked(d))
             layout.addWidget(btn)
 
-        # Reserved for a future info panel ("outdated version", "missing
-        # frames", etc.) -- deliberately left empty/unwired for now, per
-        # Sashok: just leave room for it, don't build it yet.
+        # Status panel -- outdated-version / missing-frames / shot-range-
+        # incomplete flags for the current selection (see _read_status).
+        # Was reserved empty per Sashok's original "just leave room for
+        # it" ask; now wired.
         self.info = QtWidgets.QLabel("")
         self.info.setObjectName("info")
         self.info.setMinimumHeight(28)
+        self.info.setWordWrap(True)
         layout.addWidget(self.info)
 
-        self.resize(220, 190)
+        self.setFixedWidth(220)  # keep the HUD's width; height grows to
+        # fit however many selected Reads have something to report
+        self._refresh_info()  # show current-selection status immediately on open
 
     def resizeEvent(self, event):
         path = QtGui.QPainterPath()
@@ -1098,6 +1347,69 @@ class _VersionHUD(QtWidgets.QWidget):
             self.hide()
         else:
             super().keyPressEvent(event)
+
+    def _on_bump_clicked(self, direction):
+        bump_selected_reads(direction)
+        self._refresh_info()
+
+    def _refresh_info(self):
+        """Recompute + display status for the current Nuke selection (same
+        selectedNodes()->Read filter bump_selected_reads uses). Runs on
+        HUD open and again after every button click, so this never shows
+        a stale snapshot from before the last bump. Full per-node detail
+        always goes to the Script Editor too -- same convention
+        bump_selected_reads already uses -- this label stays compact
+        since the HUD is only 220px wide."""
+        # Same working-set + "live only" logic as bump_selected_reads --
+        # falls back to nodes-in-view when nothing's selected, and a
+        # selected/visible history Read (no downstream connections) isn't
+        # something this HUD manages, so it shouldn't show up as "needs
+        # attention" either.
+        reads = [n for n in _working_read_nodes() if _is_live_read(n)]
+        if not reads:
+            self.info.setStyleSheet("")  # neutral -- falls back to the #info QSS
+            self.info.setText("No live Read selected")
+            self._resize_to_content()
+            return
+
+        # Short tags only in the label -- full detail (latest version,
+        # exact missing-frame count, exact range) still goes to the
+        # Script Editor, same split bump_selected_reads already uses.
+        # Keeps the HUD itself scannable at a glance instead of a wall of
+        # text.
+        lines = []
+        for read in reads:
+            status = _read_status(read)
+            if status is None:
+                continue
+            tags = []
+            if status["outdated"]:
+                tags.append("outdated")
+            if status["missing"]:
+                tags.append("gaps")
+            if status["incomplete"]:
+                tags.append("short range")
+            if tags:
+                lines.append(f"{read.name()}: {', '.join(tags)}")
+                r0, r1 = status["root_range"]
+                print(f"_VersionHUD: {read.name()} ({status['pass_name']}, "
+                      f"{status['current_version']}) -- outdated={status['outdated']} "
+                      f"(latest {status['latest_version']}), missing={status['missing']}, "
+                      f"range={status['seq']['first']}-{status['seq']['last']} vs shot {r0}-{r1}")
+
+        if not lines:
+            self.info.setStyleSheet("color: #57C25E;")  # green -- all clear
+            self.info.setText("OK")
+        else:
+            self.info.setStyleSheet("color: #E2554A;")  # red -- needs attention
+            shown = lines[:4]
+            more = "\n..." if len(lines) > 4 else ""
+            self.info.setText("\n".join(shown) + more)
+        self._resize_to_content()
+
+    def _resize_to_content(self):
+        self.info.adjustSize()
+        self.adjustSize()
 
 
 def show_version_hud():
