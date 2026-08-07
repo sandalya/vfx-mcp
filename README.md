@@ -33,11 +33,14 @@ vfx-mcp/                        ← git repo (github.com/sandalya/vfx-mcp)
 ├── .gitignore
 ├── houdini_mcp_server.py       ← Bridge MCP server (host=10.10.10.31)
 ├── nuke_mcp_bridge.py          ← Nuke's counterpart bridge (port 9877, see "Nuke MCP bridge" below)
-├── nuke_mcp_plugin.py          ← Canonical local copy of the Nuke-side runtime plugin
+├── nuke_mcp_plugin.py          ← Canonical local copy of the Nuke-side runtime plugin (infra only: TCP
+│                                  server, DISPATCH, audit log, MCP control HUD)
 ├── nuke_overlay.py             ← Standalone HUD PoC, superseded by the HUD classes now inside nuke_mcp_plugin.py
-├── nuke/
+├── little_helpers/             ← THE PRODUCT — self-contained artist tools (Create Layer Branch /
+│   │                              Change Layer Version / Split Layers), shippable to other compositors
+│   │                              on their own; never imports nuke_mcp_plugin, see little_helpers/README.md
 │   └── split_layers/           ← Standalone per-layer-isolation tool (2023), launched from Function 1's
-│                                  "Split layers" checkbox; deployed alongside nuke_mcp_plugin.py, see below
+│                                  "Split layers" checkbox, or standalone via F10
 ├── .venv/                      ← Python 3.14 venv (gitignored)
 ├── plugin/
 │   └── server.py               ← Канонічна локальна копія runtime-плагіна
@@ -207,30 +210,52 @@ Defined in `nuke_mcp_bridge.py`, relayed to the matching `cmd_*` handler in `nuk
 | `nuke_list_render_dir` | Lists a render-share directory (default `$FTRACK_RENDER_PATH`) from the Nuke/pc137 side — this bridge's own host has no working SMB access to the share |
 | `nuke_execute_code` | ⚠️ Raw Python exec, unrestricted — see scaffold-phase warning above |
 
+### Product tools live in `little_helpers/`, not here
+
+The three artist-facing tools below (Create Layer Branch / Change Layer
+Version / Split Layers) are implemented in the top-level `little_helpers/`
+package, not in `nuke_mcp_plugin.py`. `nuke_mcp_plugin.py` is dev-zone
+infra only (TCP server, DISPATCH, audit log, MCP control HUD) and imports
+`little_helpers` lazily, from inside two MCP command handlers
+(`cmd_get_nodes_in_view`, `cmd_list_render_dir`) — never the other way
+around. `little_helpers/` is meant to be copy-pasted into another
+compositor's `~/.nuke/` on its own, with no MCP/socket/server code along
+for the ride; see `little_helpers/README.md` for that install path.
+
+Menu registration is split the same way: `little_helpers.register_menu()`
+owns the `Little Helpers/...` menu (product only), and
+`nuke_mcp_plugin.register_menu()` owns `MCP/Server/...` (dev-only: the
+print-test PoC and the MCP control HUD). `menu.py` on pc137 calls both.
+
 ### Nuke-native hotkeys (Function 1 / Function 2)
 
 These automate the layer-branch comp pattern documented in
 `docs/NUKE_COMP_LAYER_ASSEMBLY.md` — read that doc before touching any
-of this code. Registered Nuke-side via `register_menu()` under
-`Little Helpers/...`, reload-safe (`importlib.reload` runs on every
-press, by design, so edit → deploy → press hotkey is the whole dev
-loop — no Nuke restart needed). An OS-level global hotkey (the
+of this code. Registered Nuke-side via `little_helpers.register_menu()`
+under `Little Helpers/...`, reload-safe (`little_helpers.reload_all()`
+runs on every press, by design, so edit → deploy → press hotkey is the
+whole dev loop — no Nuke restart needed). An OS-level global hotkey (the
 `keyboard` package's low-level keyboard hook) was tried first and
 never fired, most likely swallowed by AV/EDR since that hook shape is
 exactly what keyloggers use — hence hotkeys live inside Nuke itself.
 
 | Hotkey | Function | What it does |
 |--------|----------|---------------|
-| `Shift+A` | Function 1 — layer-branch init | Opens a picker HUD listing layer-branches from `list_render_dir`; picking one calls `build_layer_branch(layer_name)`, which builds the full confirmed 4-Read init template (`ShuffleCopy4/9/11 → Copy16 → ShuffleCopy12 → empty Cryptomatte → Copy24 → StickyNote`), with per-pass version/frame-range auto-resolution and a gap check that flags incomplete sequences on the Read node itself. Optional "Split layers" checkbox (default off): if checked, `_run_split_layers()` launches the standalone `nuke/split_layers/` tool, unmodified, on the branch's last node right after it's built — same manual layer-picking panel as always, just auto-opened on the right node instead of selected by hand |
-| `Shift+D` | Function 2 — version stepping | Opens `_VersionHUD` ("Latest version" / "Version +" / "Version -") acting on selected `Read` nodes, falling back to whatever's visible in the viewport if nothing is selected. Each Read is resolved and bumped independently against its own (layer, pass). Keeps a row of disconnected history Reads in sync alongside the live one (`_HISTORY_COUNTS = {"lights": 1, "beauty": 5}`), and shows a live status panel (OK / outdated / missing-frames tags) |
-| `Ctrl+Shift+T` | MCP HUD | Start / Restart / Stop the socket server, shows current status |
+| `Shift+A` | Function 1 — layer-branch init | Opens a picker HUD listing layer-branches from `little_helpers.nuke_utils.list_render_dir`; picking one calls `little_helpers.layer_branch.build_layer_branch(layer_name)`, which builds the full confirmed 4-Read init template (`ShuffleCopy4/9/11 → Copy16 → ShuffleCopy12 → empty Cryptomatte → Copy24 → StickyNote`), with per-pass version/frame-range auto-resolution and a gap check that flags incomplete sequences on the Read node itself. Optional "Split layers" checkbox (default off): if checked, `run_split_layers()` launches the standalone `little_helpers/split_layers/` tool, unmodified, on the branch's last node right after it's built — same manual layer-picking panel as always, just auto-opened on the right node instead of selected by hand |
+| `Shift+E` | Function 2 — version stepping | Opens `_VersionHUD` ("Latest version" / "Version +" / "Version -") acting on selected `Read` nodes, falling back to whatever's visible in the viewport if nothing is selected. Each Read is resolved and bumped independently against its own (layer, pass). Keeps a row of disconnected history Reads in sync alongside the live one (`_HISTORY_COUNTS = {"lights": 1, "beauty": 5}`), and shows a live status panel (OK / outdated / missing-frames tags) |
+| `F10` | Split Layers, standalone | Runs the per-lightgroup comp splitter on whatever's currently selected, independent of Function 1 |
+| `Ctrl+Shift+T` | MCP HUD (`MCP/Server/...` menu, not `Little Helpers/...`) | Start / Restart / Stop the socket server, shows current status |
 
 ### Deploy
 
 `scripts/deploy_plugin.sh` takes a target now: `<houdini|nuke|all>` —
 backs up the previous version on pc137 before copying, same as the
-Houdini flow. Reload in a live Nuke session doesn't need a restart:
-pressing any of the hotkeys above re-imports the module.
+Houdini flow. For `nuke`, it deploys `nuke_mcp_plugin.py` to
+`~/.nuke/`, then `little_helpers/` (and its `split_layers/` subpackage)
+to `~/.nuke/little_helpers/`, and clears any stale `__pycache__` under
+that dir left over from the old flat-import `split_layers/` location.
+Reload in a live Nuke session doesn't need a restart: pressing any of
+the hotkeys above re-imports the relevant module(s).
 
 ### Kill switches
 

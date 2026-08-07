@@ -19,6 +19,7 @@ That's the log. No separate write-up, no memory update unless the user asks.
 - Never touch production Houdini scenes — sandbox only: `C:/houdini_mcp_sandbox/`
 - Never start/stop Houdini yourself — the user does that manually
 - Plugin changes go only through `plugin/server.py` → `scripts/deploy_plugin.sh` (it backs up before every deploy) — never scp by hand
+- Same for Nuke: `nuke_mcp_plugin.py` + `little_helpers/` (incl. `little_helpers/split_layers/`) → `scripts/deploy_plugin.sh nuke` — never scp by hand
 - Never re-enable `execute_code` / `modify_node` / `delete_node` in the dispatcher — new capabilities go through narrow whitelisted tools only
 - Destructive actions (deleting files/nodes, force-git, changing production data, anything on pc137 beyond a normal read/deploy) — always ask before doing it, even if technically permitted
 - Full context (topology, tool list, kill switches) lives in README.md — read it on demand

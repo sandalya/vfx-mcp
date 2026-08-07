@@ -4,9 +4,9 @@ try:
 except ImportError:
     from PySide2 import QtGui, QtCore, QtWidgets
 
-from models import LayersListModel
-from uii import SplitLayersUI
-import nuke_actions
+from .models import LayersListModel
+from .uii import SplitLayersUI
+from . import nuke_actions
 
 
 

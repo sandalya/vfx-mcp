@@ -17,8 +17,11 @@ NUKE_LOCAL_DIR="$REPO_ROOT"
 NUKE_REMOTE_DIR='C:/Users/Admin/.nuke'
 NUKE_FILES=("nuke_mcp_plugin.py")
 
-NUKE_SPLIT_LAYERS_LOCAL_DIR="$REPO_ROOT/nuke/split_layers"
-NUKE_SPLIT_LAYERS_REMOTE_DIR='C:/Users/Admin/.nuke/split_layers'
+NUKE_LITTLE_HELPERS_LOCAL_DIR="$REPO_ROOT/little_helpers"
+NUKE_LITTLE_HELPERS_REMOTE_DIR='C:/Users/Admin/.nuke/little_helpers'
+
+NUKE_LITTLE_HELPERS_SPLIT_LAYERS_LOCAL_DIR="$REPO_ROOT/little_helpers/split_layers"
+NUKE_LITTLE_HELPERS_SPLIT_LAYERS_REMOTE_DIR='C:/Users/Admin/.nuke/little_helpers/split_layers'
 
 TARGET="${1:-}"
 if [[ -z "$TARGET" || ! "$TARGET" =~ ^(houdini|nuke|all)$ ]]; then
@@ -48,14 +51,19 @@ deploy_one() {
   done
 }
 
-# deploy_dir <local_dir> <remote_dir> -- backs up the whole remote folder
-# (if it exists) before overwriting, then scp's every local *.py file in.
+# deploy_dir <local_dir> <remote_dir> [skip_backup] -- backs up the whole
+# remote folder (if it exists) before overwriting, then scp's every local
+# *.py file in. Pass any non-empty 3rd arg to skip the backup -- used for
+# a subpackage dir nested under a parent dir this was already called on,
+# so its backup doesn't happen twice.
 deploy_dir() {
-  local local_dir="$1" remote_dir="$2"
+  local local_dir="$1" remote_dir="$2" skip_backup="${3:-}"
   local backup_dir="${remote_dir}_bak_${STAMP}"
 
-  echo "==> Backup dir $remote_dir -> $backup_dir (if it exists)"
-  ssh pc137 "powershell -Command \"if (Test-Path '$remote_dir') { Copy-Item -Recurse -Force '$remote_dir' '$backup_dir' }\""
+  if [[ -z "$skip_backup" ]]; then
+    echo "==> Backup dir $remote_dir -> $backup_dir (if it exists)"
+    ssh pc137 "powershell -Command \"if (Test-Path '$remote_dir') { Copy-Item -Recurse -Force '$remote_dir' '$backup_dir' }\""
+  fi
   echo "==> Ensure $remote_dir exists"
   ssh pc137 "powershell -Command \"New-Item -ItemType Directory -Force -Path '$remote_dir' | Out-Null\""
   echo "==> SCP $local_dir/*.py -> pc137:$remote_dir"
@@ -74,10 +82,14 @@ if [[ "$TARGET" == "houdini" || "$TARGET" == "all" ]]; then
 fi
 
 if [[ "$TARGET" == "nuke" || "$TARGET" == "all" ]]; then
-  echo "=== Nuke plugin ==="
+  echo "=== Nuke plugin (infra) ==="
   deploy_one "$NUKE_LOCAL_DIR" "$NUKE_REMOTE_DIR" "${NUKE_FILES[@]}"
-  echo "=== Nuke split_layers helper ==="
-  deploy_dir "$NUKE_SPLIT_LAYERS_LOCAL_DIR" "$NUKE_SPLIT_LAYERS_REMOTE_DIR"
+  echo "=== little_helpers (artist tools) ==="
+  deploy_dir "$NUKE_LITTLE_HELPERS_LOCAL_DIR" "$NUKE_LITTLE_HELPERS_REMOTE_DIR"
+  echo "=== little_helpers/split_layers ==="
+  deploy_dir "$NUKE_LITTLE_HELPERS_SPLIT_LAYERS_LOCAL_DIR" "$NUKE_LITTLE_HELPERS_SPLIT_LAYERS_REMOTE_DIR" skip_backup
+  echo "==> Clean stale __pycache__ under little_helpers (flat-import-era .pyc can shadow the new subpackage)"
+  ssh pc137 "powershell -Command \"Get-ChildItem -Path '$NUKE_LITTLE_HELPERS_REMOTE_DIR' -Recurse -Filter '__pycache__' -Directory | Remove-Item -Recurse -Force\""
 fi
 
 echo "==> Done."
@@ -104,6 +116,18 @@ if [[ "$TARGET" == "nuke" || "$TARGET" == "all" ]]; then
   echo "  This updates the module in place, but the listener thread was"
   echo "  already started against the old module -- verify with nuke_ping"
   echo "  and a call to the new command before trusting it."
+  echo
+  echo "  If menu.py doesn't call little_helpers.register_menu() yet, add"
+  echo "  (typed by hand -- clipboard paste doesn't work over RDP to pc137):"
+  echo "       import little_helpers"
+  echo "       little_helpers.register_menu()"
+  echo "  (the existing 'import nuke_mcp_plugin; nuke_mcp_plugin.register_menu()'"
+  echo "  lines stay -- the MCP menu entry still comes from there)."
+  echo
+  echo "  First deploy after this refactor only: C:/Users/Admin/.nuke/split_layers/"
+  echo "  (old flat-import location) and nuke_mcp_plugin.py.bak_* files are still"
+  echo "  on NUKE_PATH and can shadow little_helpers/split_layers/. Ask Sashok,"
+  echo "  then rename (don't delete): split_layers -> split_layers_retired_$STAMP"
   echo
 fi
 
