@@ -980,6 +980,17 @@ _HISTORY_COUNTS = {"lights": 1, "beauty": 5}  # .get(pass_name, 0) -- 0
 # already builds by hand next to a live branch (confirmed on sh320/bg:
 # 5 old beauty Reads, 1 old lights Read, none for tech/crypto).
 
+# Reload-safe (same reasoning as _server_thread etc. further down --
+# importlib.reload() re-runs this module's top level on every hotkey
+# press, so a plain `_HISTORY_ENABLED = True` here would silently reset
+# the artist's checkbox choice back to on every time). Controls the
+# "History" checkbox in _VersionHUD: True keeps _sync_history_reads
+# running on every bump (original always-on behavior); False stops new
+# history rows from being created (see bump_selected_reads) and, via
+# _set_history_enabled, removes any that already exist.
+if '_HISTORY_ENABLED' not in globals():
+    _HISTORY_ENABLED = True
+
 _HISTORY_SPACING = 110  # px between history-node slots, cosmetic only --
 # splits the difference between the two spacings actually observed on disk
 # (a hand-built history lights Read sat -116px from its live Read, a
@@ -1085,6 +1096,37 @@ def _sync_history_reads(live_read, layer_dir, pass_name, current_num):
             node["tile_color"].setValue(_HISTORY_TILE_COLOR)
 
 
+def _set_history_enabled(enabled):
+    """Backing function for _VersionHUD's "History" checkbox. Applies
+    immediately to whatever _working_read_nodes() currently resolves to
+    (selection, or nodes-in-view fallback), same working set the bump
+    buttons use -- turning the checkbox on/off is itself the action, not
+    just a setting for the next bump. Sets the _HISTORY_ENABLED flag
+    (gates future bumps in bump_selected_reads) either way."""
+    global _HISTORY_ENABLED
+    _HISTORY_ENABLED = enabled
+
+    reads = [n for n in _working_read_nodes() if _is_live_read(n)]
+    touched = 0
+    for read in reads:
+        parsed = _parse_read_file(read["file"].value())
+        if parsed is None:
+            continue
+        layer_dir, current_version, pass_name = parsed
+        if _HISTORY_COUNTS.get(pass_name, 0) <= 0:
+            continue  # tech/crypto/unrecognized -- no history row either way
+        touched += 1
+        if enabled:
+            current_num = int(_VERSION_DIR_RE.match(current_version).group(1))
+            _sync_history_reads(read, layer_dir, pass_name, current_num)
+        else:
+            for node in _history_candidates(read, layer_dir, pass_name):
+                nuke.delete(node)
+
+    print(f"_set_history_enabled({enabled}): applied to {touched} live Read(s) "
+          f"with a history-eligible pass")
+
+
 def _bump_read_version(read, direction):
     """direction: "latest" | "up" | "down". Returns (status, detail,
     parsed) where status is "updated" or "skipped", and parsed is
@@ -1167,7 +1209,7 @@ def bump_selected_reads(direction):
         if status == "updated":
             updated += 1
             layer_dir, pass_name, target_num = parsed
-            if _HISTORY_COUNTS.get(pass_name, 0) > 0:
+            if _HISTORY_COUNTS.get(pass_name, 0) > 0 and _HISTORY_ENABLED:
                 _sync_history_reads(read, layer_dir, pass_name, target_num)
         else:
             skipped += 1
@@ -1255,6 +1297,7 @@ class _VersionHUD(QtWidgets.QWidget):
             QPushButton:hover { background-color: rgba(90, 150, 240, 230); }
             QPushButton:pressed { background-color: rgba(50, 100, 180, 230); }
             #info { color: rgba(180, 180, 180, 200); font-size: 10px; }
+            QCheckBox { color: rgba(230, 230, 230, 230); font-size: 11px; }
         """)
 
         layout = QtWidgets.QVBoxLayout(self)
@@ -1274,6 +1317,18 @@ class _VersionHUD(QtWidgets.QWidget):
             btn.setFocusPolicy(QtCore.Qt.NoFocus)
             btn.clicked.connect(lambda checked=False, d=direction: self._on_bump_clicked(d))
             layout.addWidget(btn)
+
+        # History checkbox -- checked keeps the row of old-version Read
+        # nodes next to the live one (see _HISTORY_COUNTS) in sync;
+        # unchecked removes whatever history Reads already exist for the
+        # current working set and stops new ones from being created on
+        # future bumps. Reflects the reload-safe _HISTORY_ENABLED global
+        # so it stays correct across HUD re-opens, not just this instance.
+        self.history_cb = QtWidgets.QCheckBox("History")
+        self.history_cb.setFocusPolicy(QtCore.Qt.NoFocus)
+        self.history_cb.setChecked(_HISTORY_ENABLED)
+        self.history_cb.toggled.connect(self._on_history_toggled)
+        layout.addWidget(self.history_cb)
 
         # Status panel -- outdated-version / missing-frames / shot-range-
         # incomplete flags for the current selection (see _read_status).
@@ -1350,6 +1405,10 @@ class _VersionHUD(QtWidgets.QWidget):
 
     def _on_bump_clicked(self, direction):
         bump_selected_reads(direction)
+        self._refresh_info()
+
+    def _on_history_toggled(self, checked):
+        _set_history_enabled(checked)
         self._refresh_info()
 
     def _refresh_info(self):
