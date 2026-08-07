@@ -307,6 +307,28 @@ def nuke_get_env(ctx: Context, prefix: str = "") -> str:
         return f"Server Error getting env: {str(e)}"
 
 @mcp.tool()
+def nuke_list_render_dir(ctx: Context, path: str = None) -> str:
+    """List entries (name + is_dir) of a directory on the Nuke/pc137 side,
+    defaulting to $FTRACK_RENDER_PATH (the current shot's render root) when
+    `path` is omitted. First step for Function 1 (node init) -- discovering
+    what render layer-branches exist before building the 4-Read assembly
+    chain for one of them. Runs Nuke-side because pc137 already has working
+    SMB access to the render share; this bridge's own host does not."""
+    try:
+        conn = get_nuke_connection()
+        params = {"path": path} if path else {}
+        response = conn.send_command("list_render_dir", params)
+        if not response.get("ok"):
+            origin = response.get('origin', 'nuke')
+            return f"Error ({origin}): {response.get('error', 'Unknown error')}"
+        return json.dumps(response, indent=2)
+    except ConnectionError as e:
+        return f"Connection Error listing render dir: {str(e)}"
+    except Exception as e:
+        logger.error(f"Unexpected error in nuke_list_render_dir tool: {str(e)}", exc_info=True)
+        return f"Server Error listing render dir: {str(e)}"
+
+@mcp.tool()
 def nuke_execute_code(ctx: Context, code: str) -> str:
     """
     Execute raw Python inside the running Nuke session.

@@ -292,6 +292,29 @@ def cmd_get_env(payload):
     return {"env": env}
 
 
+def cmd_list_render_dir(payload):
+    """listdir() on payload["path"], defaulting to $FTRACK_RENDER_PATH -- the
+    first step of Function 1 (node init, see docs/NUKE_COMP_LAYER_ASSEMBLY.md),
+    which needs to see what render layer-branches exist on disk before it can
+    build the 4-Read assembly chain for one of them. Runs Nuke-side because
+    pc137's Nuke process already has working SMB access to the render share
+    under the ftrack-launched domain session -- the Claude Code host does not
+    (tested 2026-08-07: VPN/TCP reachable, but not domain-joined, so no creds
+    for loky.plarium.local).
+
+    Confirmed by Sashok: $FTRACK_RENDER_PATH itself contains only layer
+    subfolders, no per-frame files -- so no sequence-collapsing needed here."""
+    path = payload.get("path") or os.environ.get("FTRACK_RENDER_PATH")
+    if not path:
+        raise ValueError("no path given and $FTRACK_RENDER_PATH is not set")
+
+    entries = []
+    for name in sorted(os.listdir(path)):
+        entries.append({"name": name, "is_dir": os.path.isdir(os.path.join(path, name))})
+
+    return {"path": path, "entries": entries}
+
+
 DISPATCH = {
     "ping": cmd_ping,
     "print": cmd_print,
@@ -301,6 +324,7 @@ DISPATCH = {
     "get_selected_nodes": cmd_get_selected_nodes,
     "get_node_knobs": cmd_get_node_knobs,
     "get_env": cmd_get_env,
+    "list_render_dir": cmd_list_render_dir,
     "execute_code": cmd_execute_code,
 }
 
