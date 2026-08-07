@@ -27,6 +27,7 @@ NETWORKING
 """
 
 import json
+import re
 import socket
 import threading
 import datetime
@@ -345,6 +346,7 @@ DISPATCH = {
 
 MENU_PATH = "Little Helpers/Unused/Quick Print Test"
 MCP_MENU_PATH = "Little Helpers/MCP Server"
+LAYER_PICKER_MENU_PATH = "Little Helpers/Create Layer Branch"
 
 # Bump this by hand and redeploy to prove the reload loop actually picks
 # up new code, without restarting Nuke.
@@ -370,7 +372,8 @@ def register_menu():
         MENU_PATH,
         "import importlib, nuke_mcp_plugin; importlib.reload(nuke_mcp_plugin); "
         "nuke_mcp_plugin.show_hud()",
-        "ctrl+shift+a",
+        # No hotkey here anymore -- ctrl+shift+a moved to the layer-branch
+        # picker below. Still reachable from the menu.
     )
 
     if menu.findItem(MCP_MENU_PATH):
@@ -380,6 +383,15 @@ def register_menu():
         "import importlib, nuke_mcp_plugin; importlib.reload(nuke_mcp_plugin); "
         "nuke_mcp_plugin.toggle_mcp_hud()",
         "ctrl+shift+t",
+    )
+
+    if menu.findItem(LAYER_PICKER_MENU_PATH):
+        menu.removeItem(LAYER_PICKER_MENU_PATH)
+    menu.addCommand(
+        LAYER_PICKER_MENU_PATH,
+        "import importlib, nuke_mcp_plugin; importlib.reload(nuke_mcp_plugin); "
+        "nuke_mcp_plugin.show_layer_picker()",
+        "ctrl+shift+a",
     )
 
 
@@ -519,6 +531,329 @@ def show_hud():
     if _hud is None:
         _hud = _PrintHUD()
     _hud.show_near_cursor()
+
+
+# ---- Layer-branch picker (Ctrl+Shift+A) ---------------------------------
+# Lists the render root's layer subfolders (same data list_render_dir
+# returns) as buttons; clicking one drops the "Function 1 init" node chain
+# documented in docs/NUKE_COMP_LAYER_ASSEMBLY.md -- 4 Read nodes + the
+# ShuffleCopy/Copy assembly + an empty Cryptomatte pick point + a
+# StickyNote label. Each Read's version + frame range is resolved by
+# scanning disk per-pass (see _resolve_pass/_collapse_sequence below).
+
+_layer_picker_hud = None  # rebuilt fresh every open -- the folder list can
+                          # change between opens, so caching would go
+                          # stale (same reasoning _mcp_hud below documents).
+
+
+class _LayerPickerHUD(QtWidgets.QWidget):
+    def __init__(self, layer_names):
+        super().__init__()
+        self.setWindowFlags(
+            QtCore.Qt.FramelessWindowHint | QtCore.Qt.WindowStaysOnTopHint | QtCore.Qt.Tool
+        )
+        self.setAttribute(QtCore.Qt.WA_DeleteOnClose, False)
+
+        self.setStyleSheet("""
+            QLabel { color: rgba(230, 230, 230, 230); font-size: 11px; }
+            QPushButton {
+                background-color: rgba(70, 130, 220, 210);
+                color: white;
+                border: none;
+                border-radius: 6px;
+                padding: 8px;
+                font-weight: 600;
+                text-align: left;
+            }
+            QPushButton:hover { background-color: rgba(90, 150, 240, 230); }
+            QPushButton:pressed { background-color: rgba(50, 100, 180, 230); }
+            #status { color: rgba(220, 150, 150, 230); font-size: 10px; }
+        """)
+
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.setContentsMargins(14, 12, 14, 12)
+        layout.setSpacing(8)
+
+        title = QtWidgets.QLabel("Create layer branch")
+        title.setFont(QtGui.QFont("Segoe UI", 9, QtGui.QFont.DemiBold))
+        layout.addWidget(title)
+
+        for name in layer_names:
+            btn = QtWidgets.QPushButton(name)
+            # NoFocus -- see the root-cause comment above _McpHud: a
+            # focused button steals focus from `self`, firing
+            # focusOutEvent -> hide() before clicked() can emit.
+            btn.setFocusPolicy(QtCore.Qt.NoFocus)
+            btn.clicked.connect(lambda checked=False, n=name: self._pick(n))
+            layout.addWidget(btn)
+
+        self.status = QtWidgets.QLabel("")
+        self.status.setObjectName("status")
+        layout.addWidget(self.status)
+
+        self.resize(240, 50 + 34 * (len(layer_names) + 1))
+
+    def _pick(self, layer_name):
+        try:
+            build_layer_branch(layer_name)
+        except Exception as exc:
+            self.status.setText(str(exc))
+            print(f"build_layer_branch({layer_name!r}) failed: {exc}")
+            return
+        self.hide()
+
+    def resizeEvent(self, event):
+        path = QtGui.QPainterPath()
+        path.addRoundedRect(QtCore.QRectF(self.rect()), 12, 12)
+        self.setMask(QtGui.QRegion(path.toFillPolygon().toPolygon()))
+        super().resizeEvent(event)
+
+    def paintEvent(self, event):
+        painter = QtGui.QPainter(self)
+        painter.setRenderHint(QtGui.QPainter.Antialiasing)
+        path = QtGui.QPainterPath()
+        path.addRoundedRect(self.rect().adjusted(1, 1, -1, -1), 12, 12)
+        painter.fillPath(path, QtGui.QColor(25, 25, 28, 255))
+        painter.setPen(QtGui.QColor(255, 255, 255, 40))
+        painter.drawPath(path)
+        super().paintEvent(event)
+
+    def show_near_cursor(self):
+        pos = QtGui.QCursor.pos()
+        self.move(pos.x() - self.width() // 2, pos.y() - self.height() - 10)
+        self.show()
+        self.raise_()
+        self.activateWindow()
+
+    def focusOutEvent(self, event):
+        self.hide()
+        super().focusOutEvent(event)
+
+    def keyPressEvent(self, event):
+        if event.key() == QtCore.Qt.Key_Escape:
+            self.hide()
+        else:
+            super().keyPressEvent(event)
+
+
+def show_layer_picker():
+    """Triggered by the Nuke-side hotkey (see register_menu). Always builds
+    a fresh HUD -- see the comment on _layer_picker_hud above for why."""
+    global _layer_picker_hud
+    try:
+        result = cmd_list_render_dir({})
+    except Exception as exc:
+        print(f"show_layer_picker: list_render_dir failed: {exc}")
+        return
+    layer_names = [e["name"] for e in result["entries"] if e["is_dir"]]
+    _layer_picker_hud = _LayerPickerHUD(layer_names)
+    _layer_picker_hud.show_near_cursor()
+
+
+_LAYER_BRANCH_PASSES = ("lights", "beauty", "tech", "crypto")
+
+
+_VERSION_DIR_RE = re.compile(r"^v(\d+)$", re.IGNORECASE)
+_FRAME_FILE_RE_TMPL = r"^{pass_name}_product\.(\d+)\.([A-Za-z0-9]+)$"
+
+
+def _collapse_sequence(dirpath, pass_name):
+    """Scan dirpath for '<pass_name>_product.<frame>.<ext>' files and
+    collapse them into one printf-style pattern + frame range. Returns
+    None if no matching files exist in dirpath, otherwise a dict with
+    pattern/first/last/missing (missing = sorted list of frame numbers
+    absent inside [first, last])."""
+    pattern = re.compile(_FRAME_FILE_RE_TMPL.format(pass_name=re.escape(pass_name)))
+    frames = []
+    ext = None
+    pad = None
+    for name in os.listdir(dirpath):
+        m = pattern.match(name)
+        if not m:
+            continue
+        frame_str, ext = m.group(1), m.group(2)
+        frames.append(int(frame_str))
+        pad = len(frame_str)
+    if not frames:
+        return None
+    frames.sort()
+    first, last = frames[0], frames[-1]
+    missing = sorted(set(range(first, last + 1)) - set(frames))
+    return {
+        # "####"-style padding, not "%04d" -- confirmed working on pc137
+        # (Sashok fixed a broken Read by hand this way); %04d combined
+        # with the UNC path apparently doesn't resolve the same way.
+        "pattern": f"{pass_name}_product.{'#' * pad}.{ext}",
+        "first": first,
+        "last": last,
+        "missing": missing,
+    }
+
+
+def _resolve_pass(layer_dir, pass_name):
+    """Find the highest-numbered version folder directly under layer_dir
+    that actually contains files for pass_name, and collapse those files
+    into a sequence. Versions are resolved per-pass, independently --
+    per docs/NUKE_COMP_LAYER_ASSEMBLY.md, the 4 passes of a layer-branch
+    are not guaranteed to move in lock-step (e.g. beauty/lights at v007
+    while tech/crypto sit at v006 in one recorded shot).
+
+    Raises ValueError if no version folder under layer_dir has any files
+    for pass_name at all."""
+    versions = []
+    for name in os.listdir(layer_dir):
+        full = os.path.join(layer_dir, name)
+        if not os.path.isdir(full):
+            continue
+        m = _VERSION_DIR_RE.match(name)
+        if m:
+            versions.append((int(m.group(1)), name))
+    versions.sort(reverse=True)
+
+    for _, vname in versions:
+        # Plain "/" join, not os.path.join -- this path's root is a UNC
+        # network path (//loky.plarium.local/...) already on forward
+        # slashes; os.path.join on Windows mixes in backslashes, which
+        # broke Nuke's Read for lights/tech/crypto (confirmed 2026-08-07:
+        # beauty worked once Sashok hand-fixed it to all-forward-slash).
+        seq = _collapse_sequence(f"{layer_dir}/{vname}", pass_name)
+        if seq:
+            return vname, seq
+
+    raise ValueError(f"no '{pass_name}_product' sequence found under {layer_dir} (any version)")
+
+
+def build_layer_branch(layer_name):
+    """Function 1 init, per docs/NUKE_COMP_LAYER_ASSEMBLY.md: 4 Read nodes
+    (lights/beauty/tech/crypto) + the ShuffleCopy/Copy assembly chain + an
+    empty Cryptomatte pick point + a StickyNote label, centered on the
+    current Node Graph view (nuke.createNode's default placement when
+    nothing is selected).
+
+    Each pass's version + frame range is resolved independently by
+    scanning disk (see _resolve_pass/_collapse_sequence above) -- highest
+    version folder that actually has files for that pass wins. Read nodes
+    whose sequence has gaps get flagged (label + orange tile_color) rather
+    than silently built with a wrong frame range."""
+    root = os.environ.get("FTRACK_RENDER_PATH")
+    if not root:
+        raise ValueError("$FTRACK_RENDER_PATH is not set")
+
+    layer_dir = f"{root}/{layer_name}"
+
+    for n in nuke.allNodes():
+        n.setSelected(False)
+
+    def make(node_class, **knobs):
+        node = nuke.createNode(node_class, inpanel=False)
+        for k, v in knobs.items():
+            node[k].setValue(v)
+        return node
+
+    reads = {}
+    for pass_name in _LAYER_BRANCH_PASSES:
+        version, seq = _resolve_pass(layer_dir, pass_name)
+        file_path = f"{layer_dir}/{version}/{seq['pattern']}"
+        read = make(
+            "Read",
+            file=file_path,
+            first=seq["first"],
+            last=seq["last"],
+            origfirst=seq["first"],
+            origlast=seq["last"],
+        )
+        if seq["missing"]:
+            missing_preview = ", ".join(str(f) for f in seq["missing"][:8])
+            if len(seq["missing"]) > 8:
+                missing_preview += ", ..."
+            read["label"].setValue(
+                f"{version}  MISSING FRAMES: {missing_preview}"
+            )
+            read["tile_color"].setValue(0xD08000FF)  # orange -- catches the eye
+            print(
+                f"build_layer_branch: {pass_name} ({version}) missing "
+                f"{len(seq['missing'])} frame(s): {missing_preview}"
+            )
+        else:
+            read["label"].setValue(version)
+        reads[pass_name] = read
+
+    # Relative (dx, dy) offsets lifted directly from the captured sh320/bg
+    # v014 reference (docs/NUKE_COMP_LAYER_ASSEMBLY.md), anchored on the
+    # lights Read at (0, 0) -- Nuke's DAG convention here is top-to-bottom
+    # flow (sources at low y, result at high y), NOT left-to-right, so this
+    # must stay vertical to actually resemble the template.
+    anchor_x, anchor_y = reads["lights"].xpos(), reads["lights"].ypos()
+    reads["beauty"].setXYpos(anchor_x - 129, anchor_y + 129)
+    reads["tech"].setXYpos(anchor_x - 129, anchor_y + 307)
+    reads["crypto"].setXYpos(anchor_x - 281, anchor_y + 467)
+
+    shuffle_rgba = make("ShuffleCopy", red="red", green="green", blue="blue",
+                         label="RGBA IN")
+    shuffle_rgba.setInput(0, reads["lights"])
+    shuffle_rgba.setInput(1, reads["beauty"])
+    shuffle_rgba.setXYpos(anchor_x, anchor_y + 166)
+
+    shuffle_dir = make("ShuffleCopy", **{
+        "in": "direct_emission", "alpha": "alpha2", "black": "red",
+        "white": "green", "red2": "blue", "out2": "direct_emission",
+    }, label="DIR EMISSION")
+    shuffle_dir.setInput(0, shuffle_rgba)
+    shuffle_dir.setInput(1, reads["beauty"])
+    shuffle_dir.setXYpos(anchor_x, anchor_y + 202)
+
+    shuffle_indir = make("ShuffleCopy", **{
+        "in": "indirect_emission", "alpha": "alpha2", "black": "red",
+        "white": "green", "red2": "blue", "out2": "indirect_emission",
+    }, label="INDIR EMISSION")
+    shuffle_indir.setInput(0, shuffle_dir)
+    shuffle_indir.setInput(1, reads["beauty"])
+    shuffle_indir.setXYpos(anchor_x, anchor_y + 238)
+
+    copy_tech = make("Copy", **{
+        "from0": "Zc.X", "to0": "depth.Z",
+        "from1": "Zg.X", "to1": "Zg.X",
+        "from2": "mv.X", "to2": "mv.X",
+        "from3": "mv.Y", "to3": "mv.Y",
+        "mix": 0.48,
+    })
+    copy_tech.setInput(0, shuffle_indir)
+    copy_tech.setInput(1, reads["tech"])
+    copy_tech.setXYpos(anchor_x, anchor_y + 319)
+
+    shuffle_pos = make("ShuffleCopy", **{
+        "in": "Pg", "alpha": "alpha2", "black": "red", "white": "green",
+        "red2": "blue", "out2": "Pg",
+    }, label="POS IN")
+    shuffle_pos.setInput(0, copy_tech)
+    shuffle_pos.setInput(1, reads["tech"])
+    shuffle_pos.setXYpos(anchor_x, anchor_y + 391)
+
+    dot = make("Dot")
+    dot.setInput(0, reads["crypto"])
+    dot.setXYpos(anchor_x - 247, anchor_y + 603)
+
+    # Left empty on purpose (no matteList/pickerAdd) -- a ready pick point
+    # for the artist, mirroring the doc's captured init template.
+    cryptomatte = make("Cryptomatte")
+    cryptomatte.setInput(0, dot)
+    cryptomatte.setXYpos(anchor_x - 149, anchor_y + 600)
+
+    copy_matte = make("Copy", **{"from0": "rgba.alpha", "to0": "mask.a"})
+    copy_matte.setInput(0, shuffle_pos)
+    copy_matte.setInput(1, cryptomatte)
+    copy_matte.setXYpos(anchor_x, anchor_y + 594)
+
+    sticky = make(
+        "StickyNote",
+        label=layer_name.upper(),
+        tile_color=0x353535FF,
+        gl_color=0x797979FF,
+        note_font_size=222,
+    )
+    sticky.setXYpos(anchor_x + 286, anchor_y + 210)
+
+    return copy_matte
 
 
 # ---- MCP server control HUD ---------------------------------------------
