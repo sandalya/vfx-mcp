@@ -17,6 +17,9 @@ NUKE_LOCAL_DIR="$REPO_ROOT"
 NUKE_REMOTE_DIR='C:/Users/Admin/.nuke'
 NUKE_FILES=("nuke_mcp_plugin.py")
 
+NUKE_SPLIT_LAYERS_LOCAL_DIR="$REPO_ROOT/nuke/split_layers"
+NUKE_SPLIT_LAYERS_REMOTE_DIR='C:/Users/Admin/.nuke/split_layers'
+
 TARGET="${1:-}"
 if [[ -z "$TARGET" || ! "$TARGET" =~ ^(houdini|nuke|all)$ ]]; then
   echo "Usage: $0 <houdini|nuke|all>" >&2
@@ -45,6 +48,20 @@ deploy_one() {
   done
 }
 
+# deploy_dir <local_dir> <remote_dir> -- backs up the whole remote folder
+# (if it exists) before overwriting, then scp's every local *.py file in.
+deploy_dir() {
+  local local_dir="$1" remote_dir="$2"
+  local backup_dir="${remote_dir}_bak_${STAMP}"
+
+  echo "==> Backup dir $remote_dir -> $backup_dir (if it exists)"
+  ssh pc137 "powershell -Command \"if (Test-Path '$remote_dir') { Copy-Item -Recurse -Force '$remote_dir' '$backup_dir' }\""
+  echo "==> Ensure $remote_dir exists"
+  ssh pc137 "powershell -Command \"New-Item -ItemType Directory -Force -Path '$remote_dir' | Out-Null\""
+  echo "==> SCP $local_dir/*.py -> pc137:$remote_dir"
+  scp "$local_dir"/*.py "pc137:$remote_dir/"
+}
+
 echo "==> Reachability check"
 ssh -o BatchMode=yes -o ConnectTimeout=5 pc137 'echo ok' >/dev/null || {
   echo "ERROR: cannot reach pc137. VPN up? ssh config correct?" >&2
@@ -59,6 +76,8 @@ fi
 if [[ "$TARGET" == "nuke" || "$TARGET" == "all" ]]; then
   echo "=== Nuke plugin ==="
   deploy_one "$NUKE_LOCAL_DIR" "$NUKE_REMOTE_DIR" "${NUKE_FILES[@]}"
+  echo "=== Nuke split_layers helper ==="
+  deploy_dir "$NUKE_SPLIT_LAYERS_LOCAL_DIR" "$NUKE_SPLIT_LAYERS_REMOTE_DIR"
 fi
 
 echo "==> Done."

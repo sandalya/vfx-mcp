@@ -29,8 +29,10 @@ NETWORKING
 import json
 import re
 import socket
+import sys
 import threading
 import datetime
+import importlib
 import os
 
 import nuke
@@ -391,6 +393,7 @@ MENU_PATH = "Little Helpers/Unused/Quick Print Test"
 MCP_MENU_PATH = "Little Helpers/MCP Server"
 LAYER_PICKER_MENU_PATH = "Little Helpers/Create Layer Branch"
 VERSION_HUD_MENU_PATH = "Little Helpers/Change Layer Version"
+SPLIT_LAYERS_MENU_PATH = "Little Helpers/Split Layers"
 
 # Bump this by hand and redeploy to prove the reload loop actually picks
 # up new code, without restarting Nuke.
@@ -445,6 +448,15 @@ def register_menu():
         "import importlib, nuke_mcp_plugin; importlib.reload(nuke_mcp_plugin); "
         "nuke_mcp_plugin.show_version_hud()",
         "shift+d",
+    )
+
+    if menu.findItem(SPLIT_LAYERS_MENU_PATH):
+        menu.removeItem(SPLIT_LAYERS_MENU_PATH)
+    menu.addCommand(
+        SPLIT_LAYERS_MENU_PATH,
+        "import importlib, nuke_mcp_plugin; importlib.reload(nuke_mcp_plugin); "
+        "nuke_mcp_plugin.show_split_layers()",
+        "F10",
     )
 
 
@@ -713,6 +725,7 @@ class _LayerPickerHUD(QtWidgets.QWidget):
 
         self.setStyleSheet("""
             QLabel { color: rgba(230, 230, 230, 230); font-size: 11px; }
+            QCheckBox { color: rgba(230, 230, 230, 230); font-size: 11px; }
             QPushButton {
                 background-color: rgba(70, 130, 220, 210);
                 color: white;
@@ -739,6 +752,11 @@ class _LayerPickerHUD(QtWidgets.QWidget):
         self.wheel.activated.connect(self._pick)
         layout.addWidget(self.wheel)
 
+        self.split_checkbox = QtWidgets.QCheckBox("Split layers")
+        self.split_checkbox.setChecked(False)
+        self.split_checkbox.setFocusPolicy(QtCore.Qt.NoFocus)
+        layout.addWidget(self.split_checkbox)
+
         self.build_btn = QtWidgets.QPushButton("Build")
         self.build_btn.setFocusPolicy(QtCore.Qt.NoFocus)
         self.build_btn.clicked.connect(lambda: self._pick(self._current_selection()))
@@ -758,11 +776,17 @@ class _LayerPickerHUD(QtWidgets.QWidget):
         if not layer_name:
             return
         try:
-            build_layer_branch(layer_name)
+            last_node = build_layer_branch(layer_name)
         except Exception as exc:
             self.status.setText(str(exc))
             print(f"build_layer_branch({layer_name!r}) failed: {exc}")
             return
+        if self.split_checkbox.isChecked():
+            try:
+                _run_split_layers(last_node)
+            except Exception as exc:
+                self.status.setText(str(exc))
+                print(f"_run_split_layers({last_node.name()!r}) failed: {exc}")
         self.hide()
 
     def resizeEvent(self, event):
@@ -1078,6 +1102,47 @@ def build_layer_branch(layer_name):
     sticky.setXYpos(anchor_x + 286, anchor_y + 210)
 
     return copy_matte
+
+
+# ---- Split layers hookup (Function 1 checkbox + standalone F10) ---------
+# Calls the standalone split_layers tool (nuke/split_layers/, deployed
+# alongside this file to <.nuke>/split_layers/) unmodified -- per Sashok's
+# explicit ask, this is thin glue only (path setup + optional node
+# selection + the call), no split_layers logic ported in here. Isolating
+# *which* layers to split stays manual, inside that tool's own panel.
+
+_SPLIT_LAYERS_DIR = os.path.join(os.path.dirname(__file__), "split_layers")
+
+
+def _import_split_layers():
+    if _SPLIT_LAYERS_DIR not in sys.path:
+        sys.path.insert(0, _SPLIT_LAYERS_DIR)
+    # Reload dependencies before split_layers itself, so its `from models
+    # import ...` / `from uii import ...` rebind to the fresh modules --
+    # mirrors this file's own edit-deploy-hotkey reload loop.
+    for mod_name in ("models", "uii", "nuke_actions", "split_layers"):
+        mod = sys.modules.get(mod_name)
+        if mod is not None:
+            importlib.reload(mod)
+    import split_layers
+    return split_layers
+
+
+def _run_split_layers(node):
+    """Used by Function 1's "Split layers" checkbox -- selects `node`
+    (the branch's last node) before launching the tool on it."""
+    split_layers = _import_split_layers()
+    for n in nuke.allNodes():
+        n.setSelected(False)
+    node.setSelected(True)
+    split_layers.main()
+
+
+def show_split_layers():
+    """Triggered by the F10 hotkey (see register_menu) -- standalone entry
+    point, independent of Function 1. Launches split_layers on whatever's
+    already selected in Nuke, same as running the tool by hand always has."""
+    _import_split_layers().main()
 
 
 # ---- Version support for existing Read nodes (Ctrl+Shift+D) -------------

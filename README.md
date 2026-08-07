@@ -35,6 +35,9 @@ vfx-mcp/                        ← git repo (github.com/sandalya/vfx-mcp)
 ├── nuke_mcp_bridge.py          ← Nuke's counterpart bridge (port 9877, see "Nuke MCP bridge" below)
 ├── nuke_mcp_plugin.py          ← Canonical local copy of the Nuke-side runtime plugin
 ├── nuke_overlay.py             ← Standalone HUD PoC, superseded by the HUD classes now inside nuke_mcp_plugin.py
+├── nuke/
+│   └── split_layers/           ← Standalone per-layer-isolation tool (2023), launched from Function 1's
+│                                  "Split layers" checkbox; deployed alongside nuke_mcp_plugin.py, see below
 ├── .venv/                      ← Python 3.14 venv (gitignored)
 ├── plugin/
 │   └── server.py               ← Канонічна локальна копія runtime-плагіна
@@ -218,7 +221,7 @@ exactly what keyloggers use — hence hotkeys live inside Nuke itself.
 
 | Hotkey | Function | What it does |
 |--------|----------|---------------|
-| `Shift+A` | Function 1 — layer-branch init | Opens a picker HUD listing layer-branches from `list_render_dir`; picking one calls `build_layer_branch(layer_name)`, which builds the full confirmed 4-Read init template (`ShuffleCopy4/9/11 → Copy16 → ShuffleCopy12 → empty Cryptomatte → Copy24 → StickyNote`), with per-pass version/frame-range auto-resolution and a gap check that flags incomplete sequences on the Read node itself |
+| `Shift+A` | Function 1 — layer-branch init | Opens a picker HUD listing layer-branches from `list_render_dir`; picking one calls `build_layer_branch(layer_name)`, which builds the full confirmed 4-Read init template (`ShuffleCopy4/9/11 → Copy16 → ShuffleCopy12 → empty Cryptomatte → Copy24 → StickyNote`), with per-pass version/frame-range auto-resolution and a gap check that flags incomplete sequences on the Read node itself. Optional "Split layers" checkbox (default off): if checked, `_run_split_layers()` launches the standalone `nuke/split_layers/` tool, unmodified, on the branch's last node right after it's built — same manual layer-picking panel as always, just auto-opened on the right node instead of selected by hand |
 | `Shift+D` | Function 2 — version stepping | Opens `_VersionHUD` ("Latest version" / "Version +" / "Version -") acting on selected `Read` nodes, falling back to whatever's visible in the viewport if nothing is selected. Each Read is resolved and bumped independently against its own (layer, pass). Keeps a row of disconnected history Reads in sync alongside the live one (`_HISTORY_COUNTS = {"lights": 1, "beauty": 5}`), and shows a live status panel (OK / outdated / missing-frames tags) |
 | `Ctrl+Shift+T` | MCP HUD | Start / Restart / Stop the socket server, shows current status |
 

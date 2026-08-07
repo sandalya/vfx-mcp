@@ -136,6 +136,8 @@ StickyNote10, label="BG" — маркує branch зверху
 ### Scope для Function 1 (init) — підтверджено Sashok
 Init-скрипт створює: **4 Read + ShuffleCopy4("RGBA IN") → ShuffleCopy9("DIR EMISSION") → ShuffleCopy11("INDIR EMISSION") → Copy16(tech merge) → ShuffleCopy12("POS IN") → Cryptomatte(порожня) → Copy24(mask.a placeholder) + StickyNote(label=layer name)** — і на цьому зупиняється. Ізоляцію конкретних matte (додавання нових Cryptomatte/Copy-нод по одній на об'єкт, як у першому прикладі sh330/bg) художник робить вручну — це рішення "які об'єкти ізолювати", яке не автоматизується.
 
+**2026-08-07 update:** Function 1 отримав опціональний чекбокс "Split layers" (default off) в `_LayerPickerHUD`. Якщо увімкнений — одразу після побудови гілки `_run_split_layers()` (`nuke_mcp_plugin.py`) запускає окремий, незмінений інструмент `nuke/split_layers/` (2023, перенесений з `old_scripts/`) на щойно створеній останній ноді (`Copy24`-еквівалент). Це лише автозапуск на потрібній ноді замість ручного select + запуск скрипта — сам вибір, які layer'и/канали спліттити, і далі робиться вручну всередині панелі `split_layers`. Твердження вище (ізоляція matte — ручний, неавтоматизований крок) лишається чинним.
+
 ---
 
 ## Навіщо це задокументовано — актуальний запит
