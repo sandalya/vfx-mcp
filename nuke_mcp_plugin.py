@@ -27,6 +27,7 @@ NETWORKING
 """
 
 import json
+import random
 import re
 import socket
 import sys
@@ -447,7 +448,13 @@ def register_menu():
         VERSION_HUD_MENU_PATH,
         "import importlib, nuke_mcp_plugin; importlib.reload(nuke_mcp_plugin); "
         "nuke_mcp_plugin.show_version_hud()",
-        "shift+d",
+        # Plain "shift+d" silently loses to Nuke's own BUILT-IN Viewer menu
+        # item "Go to nextkeyframe" (also Shift+D, native to Nuke -- not
+        # something in menu.py); Ctrl+Shift+D worked but felt awkward to
+        # Sashok. Confirmed live 2026-08-07 via a full nuke.menu() scan of
+        # Nuke/Nodes/Viewer/Edit/Preferences/Player: shift+e is unbound
+        # anywhere in the app.
+        "shift+e",
     )
 
     if menu.findItem(SPLIT_LAYERS_MENU_PATH):
@@ -714,6 +721,22 @@ class _WheelPicker(QtWidgets.QWidget):
         super().paintEvent(event)
 
 
+# Sashok's ask: Build button reads a random one of these instead of the
+# same static label every time -- purely cosmetic, re-rolled on every HUD
+# open (see _LayerPickerHUD.__init__).
+_BUILD_BTN_LABELS = (
+    "ЄБАШ",
+    "АНУКА",
+    "МЕНІ ПОВЕЗЕ",
+    "БУДЬ ДОБРІШЕ",
+    "ОТАКО",
+    "ГАТІ",
+    "А ТАК МОЖНА БУЛО?",
+    "ГОЦ",
+    "БАЦ",
+)
+
+
 class _LayerPickerHUD(QtWidgets.QWidget):
     def __init__(self, layer_names):
         super().__init__()
@@ -744,10 +767,6 @@ class _LayerPickerHUD(QtWidgets.QWidget):
         layout.setContentsMargins(14, 12, 14, 12)
         layout.setSpacing(8)
 
-        title = QtWidgets.QLabel("Create layer branch")
-        title.setFont(QtGui.QFont("Segoe UI", 9, QtGui.QFont.DemiBold))
-        layout.addWidget(title)
-
         self.wheel = _WheelPicker(self.layer_names)
         self.wheel.activated.connect(self._pick)
         layout.addWidget(self.wheel)
@@ -757,7 +776,7 @@ class _LayerPickerHUD(QtWidgets.QWidget):
         self.split_checkbox.setFocusPolicy(QtCore.Qt.NoFocus)
         layout.addWidget(self.split_checkbox)
 
-        self.build_btn = QtWidgets.QPushButton("Build")
+        self.build_btn = QtWidgets.QPushButton(random.choice(_BUILD_BTN_LABELS))
         self.build_btn.setFocusPolicy(QtCore.Qt.NoFocus)
         self.build_btn.clicked.connect(lambda: self._pick(self._current_selection()))
         layout.addWidget(self.build_btn)
@@ -1145,7 +1164,7 @@ def show_split_layers():
     _import_split_layers().main()
 
 
-# ---- Version support for existing Read nodes (Ctrl+Shift+D) -------------
+# ---- Version support for existing Read nodes (Shift+E) ------------------
 # Function 2, first slice: jump-to-latest / step version up / step version
 # down on whatever Read node(s) are selected, each resolved independently
 # against its own (layer, pass) -- same per-pass-independent rule as
