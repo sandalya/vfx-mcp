@@ -774,6 +774,9 @@ class _LayerPickerHUD(QtWidgets.QWidget):
         self.split_checkbox = QtWidgets.QCheckBox("Split layers")
         self.split_checkbox.setChecked(False)
         self.split_checkbox.setFocusPolicy(QtCore.Qt.NoFocus)
+        self.split_checkbox.setToolTip(
+            "Після збірки рідів буде викликаний скріпт для розбиття композу по лайтгрупам"
+        )
         layout.addWidget(self.split_checkbox)
 
         self.build_btn = QtWidgets.QPushButton(random.choice(_BUILD_BTN_LABELS))
@@ -1516,15 +1519,25 @@ class _VersionHUD(QtWidgets.QWidget):
             QPushButton:pressed { background-color: rgba(50, 100, 180, 230); }
             #info { color: rgba(180, 180, 180, 200); font-size: 10px; }
             QCheckBox { color: rgba(230, 230, 230, 230); font-size: 11px; }
+            #version { font-size: 18px; font-weight: 700; }
         """)
 
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(14, 12, 14, 12)
         layout.setSpacing(8)
 
+        header = QtWidgets.QHBoxLayout()
         title = QtWidgets.QLabel("Change version")
         title.setFont(QtGui.QFont("Segoe UI", 9, QtGui.QFont.DemiBold))
-        layout.addWidget(title)
+        header.addWidget(title)
+        header.addStretch()
+        # Big, plain-sight readout of the selected Read(s)' current version
+        # dir (e.g. "v014") -- per Sashok's ask, so the HUD itself answers
+        # "which version am I on" without reading node names off the DAG.
+        self.version_label = QtWidgets.QLabel("")
+        self.version_label.setObjectName("version")
+        header.addWidget(self.version_label)
+        layout.addLayout(header)
 
         for label, direction in (
             ("Latest version", "latest"),
@@ -1544,6 +1557,7 @@ class _VersionHUD(QtWidgets.QWidget):
         # so it stays correct across HUD re-opens, not just this instance.
         self.history_cb = QtWidgets.QCheckBox("History")
         self.history_cb.setFocusPolicy(QtCore.Qt.NoFocus)
+        self.history_cb.setToolTip("Тримати ріди попередніх версій")
         self.history_cb.setChecked(_HISTORY_ENABLED)
         self.history_cb.toggled.connect(self._on_history_toggled)
         layout.addWidget(self.history_cb)
@@ -1643,6 +1657,11 @@ class _VersionHUD(QtWidgets.QWidget):
         # something this HUD manages, so it shouldn't show up as "needs
         # attention" either.
         reads = [n for n in _working_read_nodes() if _is_live_read(n)]
+        version_text, version_outdated = self._current_version_text(reads)
+        self.version_label.setText(version_text)
+        self.version_label.setStyleSheet(
+            "color: #9A9A9A;" if version_outdated else "color: #57C25E;"
+        )
         if not reads:
             self.info.setStyleSheet("")  # neutral -- falls back to the #info QSS
             self.info.setText("No live Read selected")
@@ -1683,6 +1702,35 @@ class _VersionHUD(QtWidgets.QWidget):
             more = "\n..." if len(lines) > 4 else ""
             self.info.setText("\n".join(shown) + more)
         self._resize_to_content()
+
+    def _current_version_text(self, reads):
+        """Version dir (e.g. "v014") of the selected live Read(s), for the
+        header readout, plus whether any of them is behind the latest
+        version available on disk for its own pass. Empty selection ->
+        blank/not-outdated. Selection spanning more than one version (the
+        4 layer-branch passes routinely aren't lock-step, per
+        docs/NUKE_COMP_LAYER_ASSEMBLY.md) -> "mixed" rather than picking
+        one arbitrarily. Unlike _read_status's "outdated" flag (beauty
+        only, by design -- see its docstring), this checks every pass
+        against its own latest: the header number should read gray
+        whenever *what's on screen* isn't the newest of that same pass,
+        regardless of which pass it is."""
+        versions = set()
+        outdated = False
+        for read in reads:
+            parsed = _parse_read_file(read["file"].value())
+            if parsed is None:
+                continue
+            layer_dir, current_version, pass_name = parsed
+            versions.add(current_version)
+            avail = _available_versions(layer_dir, pass_name)
+            if avail and avail[-1][1] != current_version:
+                outdated = True
+        if not versions:
+            return "", False
+        if len(versions) == 1:
+            return next(iter(versions)), outdated
+        return "mixed", outdated
 
     def _resize_to_content(self):
         self.info.adjustSize()
