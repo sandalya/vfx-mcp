@@ -392,7 +392,7 @@ def register_menu():
         LAYER_PICKER_MENU_PATH,
         "import importlib, nuke_mcp_plugin; importlib.reload(nuke_mcp_plugin); "
         "nuke_mcp_plugin.show_layer_picker()",
-        "ctrl+shift+a",
+        "shift+a",
     )
 
     if menu.findItem(VERSION_HUD_MENU_PATH):
@@ -401,7 +401,7 @@ def register_menu():
         VERSION_HUD_MENU_PATH,
         "import importlib, nuke_mcp_plugin; importlib.reload(nuke_mcp_plugin); "
         "nuke_mcp_plugin.show_version_hud()",
-        "ctrl+shift+d",
+        "shift+d",
     )
 
 
