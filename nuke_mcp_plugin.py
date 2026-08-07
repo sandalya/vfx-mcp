@@ -202,14 +202,38 @@ def cmd_get_selected_nodes(payload):
     return {"nodes": nodes}
 
 
+# Env-var name substrings that mark a value as a secret, checked
+# case-insensitively against the full key name. Applied regardless of the
+# requested `prefix` -- a caller can't route around this by asking for a
+# different prefix that happens to still match a secret's name (e.g.
+# prefix="FTRACK" matched FTRACK_API_KEY and leaked a live ftrack API key
+# in full over the socket the first time this ran against a real scene).
+SENSITIVE_ENV_NAME_PATTERNS = (
+    "KEY", "TOKEN", "SECRET", "PASSWORD", "PWD", "CREDENTIAL", "AUTH", "COOKIE",
+)
+
+
+def _is_sensitive_env_name(name):
+    upper = name.upper()
+    return any(pattern in upper for pattern in SENSITIVE_ENV_NAME_PATTERNS)
+
+
 def cmd_get_env(payload):
     """os.environ entries whose key startswith(payload["prefix"]). Scaffold-
     phase note: an empty/omitted prefix returns the ENTIRE environment --
     intentionally permissive for now (matches _is_allowed()'s "allow
     everything" stance), so pass a specific prefix unless you really want
-    everything dumped."""
+    everything dumped.
+
+    Values for keys matching SENSITIVE_ENV_NAME_PATTERNS are redacted (key
+    still shown, so callers know the var exists) -- see the comment above
+    the pattern list for why."""
     prefix = payload.get("prefix", "")
-    env = {k: v for k, v in os.environ.items() if k.startswith(prefix)}
+    env = {}
+    for k, v in os.environ.items():
+        if not k.startswith(prefix):
+            continue
+        env[k] = "<redacted>" if _is_sensitive_env_name(k) else v
     return {"env": env}
 
 
