@@ -1,8 +1,15 @@
 #!/usr/bin/env bash
 # Deploy plugin code to pc137, with a timestamped backup before every
 # file overwrite.
-# Usage: ./scripts/deploy_plugin.sh <houdini|nuke|all>
+# Usage: ./scripts/deploy_plugin.sh <houdini|hmcp|nuke|all>
 # Requires: ssh pc137 alias configured, VPN up.
+#
+# "houdini" deploys the OLD plugin (port 9876, untouched, still in
+# production use). "hmcp" deploys the NEW plugin package under rewrite
+# (houdini/docs/HOUDINI_MCP_REWRITE_PLAN.md; port 9878, separate process,
+# separate sandbox-only write boundary). "all" does not include hmcp --
+# it's opted into explicitly until Phase 3 passes and the old plugin is
+# retired.
 
 set -euo pipefail
 
@@ -12,6 +19,10 @@ STAMP="$(date +%Y%m%d_%H%M%S)"
 HOUDINI_LOCAL_DIR="$REPO_ROOT/houdini/plugin"
 HOUDINI_REMOTE_DIR='C:/Users/Admin/Documents/houdini21.0/scripts/python/houdinimcp'
 HOUDINI_FILES=("server.py" "HoudiniMCPRender.py")
+
+HMCP_LOCAL_DIR="$REPO_ROOT/houdini/plugin/hmcp"
+HMCP_REMOTE_DIR='C:/Users/Admin/Documents/houdini21.0/scripts/python/hmcp'
+COMMANDS_SPEC_LOCAL="$REPO_ROOT/houdini/commands_spec.py"
 
 NUKE_LOCAL_DIR="$REPO_ROOT/nuke/plugin"
 NUKE_REMOTE_DIR='C:/Users/Admin/.nuke'
@@ -28,8 +39,8 @@ NUKE_LITTLE_HELPERS_SPLIT_LAYERS_LOCAL_DIR="$LITTLE_HELPERS_REPO_DIR/split_layer
 NUKE_LITTLE_HELPERS_SPLIT_LAYERS_REMOTE_DIR='C:/Users/Admin/.nuke/little_helpers/split_layers'
 
 TARGET="${1:-}"
-if [[ -z "$TARGET" || ! "$TARGET" =~ ^(houdini|nuke|all)$ ]]; then
-  echo "Usage: $0 <houdini|nuke|all>" >&2
+if [[ -z "$TARGET" || ! "$TARGET" =~ ^(houdini|hmcp|nuke|all)$ ]]; then
+  echo "Usage: $0 <houdini|hmcp|nuke|all>" >&2
   exit 1
 fi
 
@@ -85,6 +96,30 @@ if [[ "$TARGET" == "houdini" || "$TARGET" == "all" ]]; then
   deploy_one "$HOUDINI_LOCAL_DIR" "$HOUDINI_REMOTE_DIR" "${HOUDINI_FILES[@]}"
 fi
 
+if [[ "$TARGET" == "hmcp" ]]; then
+  echo "=== hmcp plugin (new, port 9878, Phase 1 read-only) ==="
+  deploy_dir "$HMCP_LOCAL_DIR" "$HMCP_REMOTE_DIR"
+
+  if [ ! -f "$COMMANDS_SPEC_LOCAL" ]; then
+    echo "ERROR: commands_spec.py not found at $COMMANDS_SPEC_LOCAL" >&2
+    exit 1
+  fi
+  echo "==> SCP commands_spec.py -> pc137:$HMCP_REMOTE_DIR (shared source of truth, deployed alongside the package)"
+  scp "$COMMANDS_SPEC_LOCAL" "pc137:$HMCP_REMOTE_DIR/commands_spec.py"
+
+  HYTHON='C:\Program Files\Side Effects Software\Houdini 21.0.596\bin\hython.exe'
+  echo "==> hython -m py_compile every file in the deployed hmcp package"
+  for f in "$HMCP_LOCAL_DIR"/*.py; do
+    fname="$(basename "$f")"
+    echo "    - $fname"
+    ssh pc137 "powershell -Command \"& '$HYTHON' -m py_compile '$HMCP_REMOTE_DIR/$fname'\""
+  done
+  ssh pc137 "powershell -Command \"& '$HYTHON' -m py_compile '$HMCP_REMOTE_DIR/commands_spec.py'\""
+
+  echo "==> check_contract.py (only meaningful once the plugin is running live; a connection failure here just means it isn't started yet)"
+  "$REPO_ROOT/.venv/Scripts/python.exe" "$REPO_ROOT/scripts/check_contract.py" || echo "    (non-fatal at deploy time -- see message above)"
+fi
+
 if [[ "$TARGET" == "nuke" || "$TARGET" == "all" ]]; then
   echo "=== Nuke plugin (infra) ==="
   deploy_one "$NUKE_LOCAL_DIR" "$NUKE_REMOTE_DIR" "${NUKE_FILES[@]}"
@@ -114,6 +149,16 @@ if [[ "$TARGET" == "houdini" || "$TARGET" == "all" ]]; then
   echo "  3. Reopen Houdini, load your scene, in Python Shell run:"
   echo "       import houdinimcp"
   echo "       houdinimcp.start_server(host='0.0.0.0')"
+  echo
+fi
+
+if [[ "$TARGET" == "hmcp" ]]; then
+  echo "Next steps for hmcp (RDP, does not affect the old plugin on 9876):"
+  echo "  In Houdini's Python Shell, with a scene open:"
+  echo "       import hmcp"
+  echo "       hmcp.start_server()"
+  echo "  Then re-run: ./scripts/check_contract.py to confirm the live"
+  echo "  plugin agrees with houdini/commands_spec.py."
   echo
 fi
 
