@@ -46,7 +46,9 @@ vfx-mcp/                        ← git repo (github.com/sandalya/vfx-mcp)
 │   └── server.py               ← Канонічна локальна копія runtime-плагіна
 ├── docs/
 │   ├── SCENE_ANALYSIS.md       ← Дамп реальної production сцени, parm vocabulary
-│   └── NUKE_COMP_LAYER_ASSEMBLY.md ← Layer-branch comp pattern that the Nuke tooling automates (Function 1/2)
+│   ├── NUKE_COMP_LAYER_ASSEMBLY.md ← Layer-branch comp pattern that the Nuke tooling automates (Function 1/2)
+│   └── NUKE_PIPELINE_TD_INTEGRATION.md ← For the Nuke pipeline TD: where little_helpers/ files go on a
+│                                  shared NUKE_PATH, menu.py wiring, hotkey collisions, convention coupling
 ├── notes/
 │   ├── README.md               ← Як працює CD ↔ CC inbox
 │   └── cc_inbox.md             ← (з'являється коли CD пише через forward_to_cc)

@@ -6,6 +6,13 @@ comp pattern these tools assume). No MCP, no network, no server -- this
 package never opens a socket and never talks to anything outside the Nuke
 session it's running in.
 
+Installing this yourself on your own machine? Keep reading below.
+Rolling it out pipeline-wide for other compositors? See
+`docs/NUKE_PIPELINE_TD_INTEGRATION.md` in the parent repo instead --
+it covers shared-`NUKE_PATH` placement, `menu.py` wiring, hotkey
+collision checks, and which of the three tools are coupled to the
+layer-branch comp convention.
+
 ## What's here
 
 | Tool | Hotkey | What it does |
