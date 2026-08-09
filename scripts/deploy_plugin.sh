@@ -9,18 +9,22 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 STAMP="$(date +%Y%m%d_%H%M%S)"
 
-HOUDINI_LOCAL_DIR="$REPO_ROOT/plugin"
+HOUDINI_LOCAL_DIR="$REPO_ROOT/houdini/plugin"
 HOUDINI_REMOTE_DIR='C:/Users/Admin/Documents/houdini21.0/scripts/python/houdinimcp'
 HOUDINI_FILES=("server.py" "HoudiniMCPRender.py")
 
-NUKE_LOCAL_DIR="$REPO_ROOT"
+NUKE_LOCAL_DIR="$REPO_ROOT/nuke/plugin"
 NUKE_REMOTE_DIR='C:/Users/Admin/.nuke'
 NUKE_FILES=("nuke_mcp_plugin.py")
 
-NUKE_LITTLE_HELPERS_LOCAL_DIR="$REPO_ROOT/little_helpers"
+# little_helpers/ is its own repo (github.com/sandalya/little_helpers) as of
+# the Phase 0 restructuring -- checked out as a sibling directory next to
+# this repo, not inside it.
+LITTLE_HELPERS_REPO_DIR="$(cd "$REPO_ROOT/.." && pwd)/little_helpers"
+NUKE_LITTLE_HELPERS_LOCAL_DIR="$LITTLE_HELPERS_REPO_DIR"
 NUKE_LITTLE_HELPERS_REMOTE_DIR='C:/Users/Admin/.nuke/little_helpers'
 
-NUKE_LITTLE_HELPERS_SPLIT_LAYERS_LOCAL_DIR="$REPO_ROOT/little_helpers/split_layers"
+NUKE_LITTLE_HELPERS_SPLIT_LAYERS_LOCAL_DIR="$LITTLE_HELPERS_REPO_DIR/split_layers"
 NUKE_LITTLE_HELPERS_SPLIT_LAYERS_REMOTE_DIR='C:/Users/Admin/.nuke/little_helpers/split_layers'
 
 TARGET="${1:-}"
@@ -84,6 +88,14 @@ fi
 if [[ "$TARGET" == "nuke" || "$TARGET" == "all" ]]; then
   echo "=== Nuke plugin (infra) ==="
   deploy_one "$NUKE_LOCAL_DIR" "$NUKE_REMOTE_DIR" "${NUKE_FILES[@]}"
+
+  if [ ! -d "$LITTLE_HELPERS_REPO_DIR" ]; then
+    echo "ERROR: little_helpers/ sibling checkout not found at $LITTLE_HELPERS_REPO_DIR" >&2
+    echo "  It's a separate repo now -- clone it next to this one:" >&2
+    echo "    git clone https://github.com/sandalya/little_helpers.git \"$LITTLE_HELPERS_REPO_DIR\"" >&2
+    exit 1
+  fi
+
   echo "=== little_helpers (artist tools) ==="
   deploy_dir "$NUKE_LITTLE_HELPERS_LOCAL_DIR" "$NUKE_LITTLE_HELPERS_REMOTE_DIR"
   echo "=== little_helpers/split_layers ==="
@@ -123,11 +135,6 @@ if [[ "$TARGET" == "nuke" || "$TARGET" == "all" ]]; then
   echo "       little_helpers.register_menu()"
   echo "  (the existing 'import nuke_mcp_plugin; nuke_mcp_plugin.register_menu()'"
   echo "  lines stay -- the MCP menu entry still comes from there)."
-  echo
-  echo "  First deploy after this refactor only: C:/Users/Admin/.nuke/split_layers/"
-  echo "  (old flat-import location) and nuke_mcp_plugin.py.bak_* files are still"
-  echo "  on NUKE_PATH and can shadow little_helpers/split_layers/. Ask Sashok,"
-  echo "  then rename (don't delete): split_layers -> split_layers_retired_$STAMP"
   echo
 fi
 

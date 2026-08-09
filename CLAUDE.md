@@ -14,20 +14,19 @@ deploy succeeds) — before moving to the next thing — append one line to
 
 That's the log. No separate write-up, no memory update unless the user asks.
 
-## Safety rules
+## Safety rules (shared, both stacks)
 
-- Never touch production Houdini scenes — sandbox only: `C:/houdini_mcp_sandbox/`
-- Never start/stop Houdini yourself — the user does that manually
-- Plugin changes go only through `plugin/server.py` → `scripts/deploy_plugin.sh` (it backs up before every deploy) — never scp by hand
-- Same for Nuke: `nuke_mcp_plugin.py` + `little_helpers/` (incl. `little_helpers/split_layers/`) → `scripts/deploy_plugin.sh nuke` — never scp by hand
-- Never re-enable `execute_code` / `modify_node` / `delete_node` in the dispatcher — new capabilities go through narrow whitelisted tools only
-- Destructive actions (deleting files/nodes, force-git, changing production data, anything on pc137 beyond a normal read/deploy) — always ask before doing it, even if technically permitted
-- Full context (topology, tool list, kill switches) lives in README.md — read it on demand
-
-## Reference docs
-
-- `docs/SCENE_ANALYSIS.md` — Houdini `/stage` lighting scene breakdown (lighting artist's node topology, render passes, light rig)
-- `docs/NUKE_COMP_LAYER_ASSEMBLY.md` — Sashok's recurring Nuke comp pattern: each layer branch (fg/bg/floorVolume/atmo/...) assembled from 4 Read nodes (lights/beauty/tech/crypto product passes), merged via Copy nodes, per-object mattes off a Cryptomatte/Dot-spine chain. Read this before touching any comp-layer or Read-node tooling.
+- Destructive actions (deleting files/nodes, force-git, changing production
+  data, anything on pc137 beyond a normal read/deploy) — always ask before
+  doing it, even if technically permitted
+- Never re-enable `execute_code` / broad `modify_node` / broad `delete_node`
+  in either dispatcher — new capabilities go through narrow whitelisted
+  tools only
+- Full context (topology, tool list, kill switches) lives in README.md —
+  read it on demand
+- Domain-specific rules live in nested `CLAUDE.md` files, loaded
+  automatically when working inside that subtree: `houdini/CLAUDE.md`,
+  `nuke/CLAUDE.md`
 
 ## Language
 

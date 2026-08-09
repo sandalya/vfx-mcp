@@ -12,7 +12,7 @@ Senior CG-artist Plarium (Sashok), Houdini 21.0.596 + Nuke 16.0v5. Лайтер.
 ```
 Claude Desktop (локальна)
     ↓ stdio (MCP)
-Bridge: houdini_mcp_server.py (локальна, .venv)
+Bridge: houdini/bridge/houdini_mcp_server.py (локальна, .venv)
     ↓ TCP 10.10.10.31:9876
 Houdini plugin: houdinimcp/server.py (PC-137, робоча)
     ↓ PySide6 QTimer
@@ -29,40 +29,45 @@ Houdini 21.0.596 (сцена, ноди, рендер)
 ```
 vfx-mcp/                        ← git repo (github.com/sandalya/vfx-mcp)
 ├── README.md                   ← цей файл (читається CD через get_project_context)
+├── CLAUDE.md                   ← shared safety doctrine, one copy only
 ├── BACKLOG.md                  ← живий список done / TODO / known issues
 ├── .gitignore
-├── houdini_mcp_server.py       ← Bridge MCP server (host=10.10.10.31)
-├── nuke_mcp_bridge.py          ← Nuke's counterpart bridge (port 9877, see "Nuke MCP bridge" below)
-├── nuke_mcp_plugin.py          ← Canonical local copy of the Nuke-side runtime plugin (infra only: TCP
-│                                  server, DISPATCH, audit log, MCP control HUD)
-├── nuke_overlay.py             ← Standalone HUD PoC, superseded by the HUD classes now inside nuke_mcp_plugin.py
-├── little_helpers/             ← THE PRODUCT — self-contained artist tools (Create Layer Branch /
-│   │                              Change Layer Version / Split Layers), shippable to other compositors
-│   │                              on their own; never imports nuke_mcp_plugin, see little_helpers/README.md
-│   └── split_layers/           ← Standalone per-layer-isolation tool (2023), launched from Function 1's
-│                                  "Split layers" checkbox, or standalone via F10
+├── houdini/
+│   ├── CLAUDE.md                ← Houdini-specific rules
+│   ├── bridge/houdini_mcp_server.py     ← Bridge MCP server (host=10.10.10.31)
+│   ├── plugin/server.py                 ← Канонічна локальна копія runtime-плагіна
+│   ├── plugin/HoudiniMCPRender.py
+│   └── docs/
+│       ├── SCENE_ANALYSIS.md            ← Дамп реальної production сцени, parm vocabulary
+│       └── HOUDINI_MCP_REWRITE_PLAN.md  ← Execution plan for the new hmcp/ plugin layer
+├── nuke/
+│   ├── CLAUDE.md                ← Nuke-specific rules
+│   ├── bridge/nuke_mcp_bridge.py        ← Nuke's counterpart bridge (port 9877, see "Nuke MCP bridge" below)
+│   └── plugin/nuke_mcp_plugin.py        ← Canonical local copy of the Nuke-side runtime plugin (infra only:
+│                                  TCP server, DISPATCH, audit log, MCP control HUD)
 ├── .venv/                      ← Python 3.14 venv (gitignored)
-├── plugin/
-│   └── server.py               ← Канонічна локальна копія runtime-плагіна
-├── docs/
-│   ├── SCENE_ANALYSIS.md       ← Дамп реальної production сцени, parm vocabulary
-│   ├── NUKE_COMP_LAYER_ASSEMBLY.md ← Layer-branch comp pattern that the Nuke tooling automates (Function 1/2)
-│   └── NUKE_PIPELINE_TD_INTEGRATION.md ← For the Nuke pipeline TD: where little_helpers/ files go on a
-│                                  shared NUKE_PATH, menu.py wiring, hotkey collisions, convention coupling
 ├── notes/
 │   ├── README.md               ← Як працює CD ↔ CC inbox
 │   └── cc_inbox.md             ← (з'являється коли CD пише через forward_to_cc)
 ├── scripts/
-│   └── deploy_plugin.sh        ← Backup + scp + reminder для plugin/server.py → pc137
+│   └── deploy_plugin.sh        ← Backup + scp + reminder для houdini|nuke plugin → pc137
 ├── patches/                    ← Старі PS1 патчі (historical)
 ├── upstream/                   ← Reference clone capoom/houdini-mcp
 └── .claude/                    ← Claude Code memory (gitignored)
+
+../little_helpers/               ← SEPARATE REPO (github.com/sandalya/little_helpers), checked out as a
+                                    sibling directory next to vfx-mcp/, not inside it. THE PRODUCT —
+                                    self-contained artist tools (Create Layer Branch / Change Layer
+                                    Version / Split Layers), shippable to other compositors on their own;
+                                    never imports nuke_mcp_plugin. Its own docs/NUKE_COMP_LAYER_ASSEMBLY.md
+                                    and docs/NUKE_PIPELINE_TD_INTEGRATION.md live there too.
+                                    deploy_plugin.sh nuke reads it from ../little_helpers.
 ```
 
 ## Безпека (що зроблено)
 
 ### IP allowlist
-- `ALLOWED_CLIENTS = {'127.0.0.1', '10.10.11.41'}` в `plugin/server.py`
+- `ALLOWED_CLIENTS = {'127.0.0.1', '10.10.11.41'}` в `houdini/plugin/server.py`
 - Чужі IP → лог `BLOCKED_IP` в `~/houdini_mcp_audit.log` + close
 - Audit-log на pc137: `C:\Users\Admin\houdini_mcp_audit.log`
 
@@ -72,7 +77,7 @@ vfx-mcp/                        ← git repo (github.com/sandalya/vfx-mcp)
 - `modify_node` — broad-set параметрів нод
 - `delete_node` — видалення нод
 
-Натомість додано вузький **`set_node_parameter`** з `SAFE_PARMS` whitelist (transforms, базова геометрія, флаги — див. `plugin/server.py`).
+Натомість додано вузький **`set_node_parameter`** з `SAFE_PARMS` whitelist (transforms, базова геометрія, флаги — див. `houdini/plugin/server.py`).
 
 ### Auto-start вимкнено
 `import houdinimcp` сам не стартує сервер. Запуск вручну (shelf-button `Start MCP` або в Python Shell):
@@ -83,7 +88,7 @@ houdinimcp.start_server(host='0.0.0.0')  # для доступу ззовні
 
 ## Доступні MCP tools
 
-Поточний список (визначений в `houdini_mcp_server.py`):
+Поточний список (визначений в `houdini/bridge/houdini_mcp_server.py`):
 
 | Tool | Призначення |
 |------|----|
@@ -129,9 +134,9 @@ C:\Users\gamai\AppData\Local\Packages\Claude_pzs8sxrjxfjjc\LocalCache\Roaming\Cl
 
 ## Sync: локальна → PC-137
 
-Після змін у `plugin/server.py`:
+Після змін у `houdini/plugin/server.py`:
 ```bash
-./scripts/deploy_plugin.sh
+./scripts/deploy_plugin.sh houdini
 ```
 (робить ssh ping → backup на pc137 → scp → виводить нагадування про reload)
 
@@ -146,7 +151,7 @@ importlib.reload(houdinimcp)
 houdinimcp.start_server(host='0.0.0.0')
 ```
 
-Якщо змінився `houdini_mcp_server.py` (bridge) — повний рестарт **Claude Desktop**, щоб новий subprocess з новими schemas стартував.
+Якщо змінився `houdini/bridge/houdini_mcp_server.py` (bridge) — повний рестарт **Claude Desktop**, щоб новий subprocess з новими schemas стартував.
 
 ## Kill switches
 
@@ -169,7 +174,7 @@ convention (Ukrainian is for conversation, not for reference docs).
 ```
 Claude Desktop / Claude Code (local)
     ↓ stdio (MCP), `uv run`
-Bridge: nuke_mcp_bridge.py (local, .venv)
+Bridge: nuke/bridge/nuke_mcp_bridge.py (local, .venv)
     ↓ TCP 10.10.10.31:9877
 Nuke plugin: nuke_mcp_plugin.py (PC-137, ~/.nuke/)
     ↓ PySide6 (Nuke 16 is itself a Qt app — no separate process)
@@ -198,7 +203,7 @@ treat `nuke_execute_code` as a stable capability to build on.
 
 ### Available MCP tools
 
-Defined in `nuke_mcp_bridge.py`, relayed to the matching `cmd_*` handler in `nuke_mcp_plugin.py`:
+Defined in `nuke/bridge/nuke_mcp_bridge.py`, relayed to the matching `cmd_*` handler in `nuke/plugin/nuke_mcp_plugin.py`:
 
 | Tool | Purpose |
 |------|---------|
@@ -212,17 +217,18 @@ Defined in `nuke_mcp_bridge.py`, relayed to the matching `cmd_*` handler in `nuk
 | `nuke_list_render_dir` | Lists a render-share directory (default `$FTRACK_RENDER_PATH`) from the Nuke/pc137 side — this bridge's own host has no working SMB access to the share |
 | `nuke_execute_code` | ⚠️ Raw Python exec, unrestricted — see scaffold-phase warning above |
 
-### Product tools live in `little_helpers/`, not here
+### Product tools live in the separate `little_helpers` repo, not here
 
 The three artist-facing tools below (Create Layer Branch / Change Layer
-Version / Split Layers) are implemented in the top-level `little_helpers/`
-package, not in `nuke_mcp_plugin.py`. `nuke_mcp_plugin.py` is dev-zone
-infra only (TCP server, DISPATCH, audit log, MCP control HUD) and imports
-`little_helpers` lazily, from inside two MCP command handlers
-(`cmd_get_nodes_in_view`, `cmd_list_render_dir`) — never the other way
-around. `little_helpers/` is meant to be copy-pasted into another
-compositor's `~/.nuke/` on its own, with no MCP/socket/server code along
-for the ride; see `little_helpers/README.md` for that install path.
+Version / Split Layers) are implemented in `little_helpers`
+(`github.com/sandalya/little_helpers`, checked out as a sibling directory
+next to this repo — see `nuke/CLAUDE.md`), not in `nuke_mcp_plugin.py`.
+`nuke_mcp_plugin.py` is dev-zone infra only (TCP server, DISPATCH, audit
+log, MCP control HUD) and imports `little_helpers` lazily, from inside two
+MCP command handlers (`cmd_get_nodes_in_view`, `cmd_list_render_dir`) —
+never the other way around. `little_helpers` is meant to be copy-pasted
+into another compositor's `~/.nuke/` on its own, with no MCP/socket/server
+code along for the ride; see its own `README.md` for that install path.
 
 Menu registration is split the same way: `little_helpers.register_menu()`
 owns the `Little Helpers/...` menu (product only), and
@@ -232,8 +238,8 @@ print-test PoC and the MCP control HUD). `menu.py` on pc137 calls both.
 ### Nuke-native hotkeys (Function 1 / Function 2)
 
 These automate the layer-branch comp pattern documented in
-`docs/NUKE_COMP_LAYER_ASSEMBLY.md` — read that doc before touching any
-of this code. Registered Nuke-side via `little_helpers.register_menu()`
+`docs/NUKE_COMP_LAYER_ASSEMBLY.md` in the `little_helpers` repo — read
+that doc before touching any of this code. Registered Nuke-side via `little_helpers.register_menu()`
 under `Little Helpers/...`, reload-safe (`little_helpers.reload_all()`
 runs on every press, by design, so edit → deploy → press hotkey is the
 whole dev loop — no Nuke restart needed). An OS-level global hotkey (the
@@ -252,12 +258,12 @@ exactly what keyloggers use — hence hotkeys live inside Nuke itself.
 
 `scripts/deploy_plugin.sh` takes a target now: `<houdini|nuke|all>` —
 backs up the previous version on pc137 before copying, same as the
-Houdini flow. For `nuke`, it deploys `nuke_mcp_plugin.py` to
-`~/.nuke/`, then `little_helpers/` (and its `split_layers/` subpackage)
+Houdini flow. For `nuke`, it deploys `nuke_mcp_plugin.py` to `~/.nuke/`,
+then `little_helpers/` (and its `split_layers/` subpackage) — read from
+the sibling `../little_helpers` checkout, not from inside this repo —
 to `~/.nuke/little_helpers/`, and clears any stale `__pycache__` under
-that dir left over from the old flat-import `split_layers/` location.
-Reload in a live Nuke session doesn't need a restart: pressing any of
-the hotkeys above re-imports the relevant module(s).
+that dir. Reload in a live Nuke session doesn't need a restart: pressing
+any of the hotkeys above re-imports the relevant module(s).
 
 ### Kill switches
 
@@ -304,7 +310,7 @@ worry about — see the hotkey note above.
 - **Перед командами:** машина (локальна/робоча), шелл, права, чи Houdini має бути запущений.
 - **Не запускати/закривати Houdini** — це робить юзер вручну.
 - **Не міняти прод-сцени** — тільки sandbox `C:/houdini_mcp_sandbox/`.
-- **Зміни плагіна:** `plugin/server.py` — канонічна копія, deploy через `scripts/deploy_plugin.sh`, що сам робить timestamped backup.
+- **Зміни плагіна:** `houdini/plugin/server.py` — канонічна копія, deploy через `scripts/deploy_plugin.sh`, що сам робить timestamped backup.
 - **На вимогу "перевір inbox":** прочитати `notes/cc_inbox.md`, опрацювати накопичене, відмітити що зроблено (`> resolved: <sha>`) або перенести в постійний документ.
 
 ## Жорсткі правила
