@@ -30,7 +30,7 @@ print("HoudiniMCPRender module loaded successfully.")
 # ----------------------------------
 
 # --- SECURITY: IP allowlist ---
-ALLOWED_CLIENTS = {'127.0.0.1', '10.10.11.41'}
+ALLOWED_CLIENTS = {'127.0.0.1', '10.10.11.41', '10.10.11.31'}
 
 # Info about the extension (optional metadata)
 EXTENSION_NAME = "Houdini MCP"
