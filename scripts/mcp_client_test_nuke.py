@@ -17,8 +17,9 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-BRIDGE = os.path.join(os.path.dirname(SCRIPT_DIR), "nuke_mcp_bridge.py")
-PYTHON = os.path.join(os.path.dirname(SCRIPT_DIR), ".venv", "Scripts", "python.exe")
+REPO_ROOT = os.path.dirname(SCRIPT_DIR)
+BRIDGE = os.path.join(REPO_ROOT, "nuke", "bridge", "nuke_mcp_bridge.py")
+PYTHON = os.path.join(REPO_ROOT, ".venv", "Scripts", "python.exe")
 
 
 async def main():

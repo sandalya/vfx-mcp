@@ -11,11 +11,13 @@ topology and connection details (host/tunnel not yet finalized).
 import sys
 import os
 
-# Get the directory where the script is located
+# Get the directory where the script is located, and the repo root
+# (this script lives at <repo>/nuke/bridge/, two levels down)
 script_dir = os.path.dirname(os.path.abspath(__file__))
+repo_root = os.path.dirname(os.path.dirname(script_dir))
 
 # Add the virtual environment's site-packages to Python's path
-venv_site_packages = os.path.join(script_dir, '.venv', 'Lib', 'site-packages')
+venv_site_packages = os.path.join(repo_root, '.venv', 'Lib', 'site-packages')
 if os.path.exists(venv_site_packages):
     sys.path.insert(0, venv_site_packages)
     print(f"Added {venv_site_packages} to sys.path", file=sys.stderr)
