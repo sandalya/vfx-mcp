@@ -237,6 +237,116 @@ def describe_commands(ctx: Context) -> str:
     return _call("describe_commands", {})
 
 
+# -------------------------------------------------------------------
+# Phase 2: write tools. Every one refuses unless the open Houdini scene
+# already lives under C:/houdini_mcp_sandbox/ (save_scene_as is the one
+# exception -- it's how a fresh scene gets into the sandbox in the first
+# place). See houdini/plugin/hmcp/guards.py for the full safety layer.
+# -------------------------------------------------------------------
+
+@mcp.tool()
+def create_node(ctx: Context, parent_path: str, node_type: str, name: Optional[str] = None) -> str:
+    """Create a node under parent_path (e.g. parent_path='/obj', node_type='geo').
+    Restricted to Sop/Object categories. No parameters dict -- call set_parm
+    afterwards. Requires a sandbox scene."""
+    params = {"parent_path": parent_path, "node_type": node_type}
+    if name is not None:
+        params["name"] = name
+    return _call("create_node", params)
+
+
+@mcp.tool()
+def connect_nodes(ctx: Context, from_path: str, to_path: str, input_index: int = 0) -> str:
+    """Wire from_path's output into to_path's input_index-th input. Requires a sandbox scene."""
+    return _call("connect_nodes", {"from_path": from_path, "to_path": to_path, "input_index": input_index})
+
+
+@mcp.tool()
+def set_parm(ctx: Context, node_path: str, parm_name: str, value) -> str:
+    """Set a single parameter value. Refuses output-path parms (sopoutput etc.),
+    Python/callback/script parms, and any file-type parm other than
+    file/filepath. Requires a sandbox scene."""
+    return _call("set_parm", {"node_path": node_path, "parm_name": parm_name, "value": value})
+
+
+@mcp.tool()
+def set_expression(ctx: Context, node_path: str, parm_name: str, expression: str) -> str:
+    """Set an HScript expression on a parameter. Never Python. Requires a sandbox scene."""
+    return _call("set_expression", {"node_path": node_path, "parm_name": parm_name, "expression": expression})
+
+
+@mcp.tool()
+def delete_node(ctx: Context, node_path: str) -> str:
+    """Destroy a node -- only if this agent created it earlier in the current
+    session. Requires a sandbox scene."""
+    return _call("delete_node", {"node_path": node_path})
+
+
+@mcp.tool()
+def rename_node(ctx: Context, node_path: str, new_name: str) -> str:
+    """Rename a node. Requires a sandbox scene."""
+    return _call("rename_node", {"node_path": node_path, "new_name": new_name})
+
+
+@mcp.tool()
+def set_position(ctx: Context, node_path: str, x: float, y: float) -> str:
+    """Set a node's network-view position. Requires a sandbox scene."""
+    return _call("set_position", {"node_path": node_path, "x": x, "y": y})
+
+
+@mcp.tool()
+def set_color(ctx: Context, node_path: str, r: float, g: float, b: float) -> str:
+    """Set a node's network-view color (0-1 floats). Requires a sandbox scene."""
+    return _call("set_color", {"node_path": node_path, "r": r, "g": g, "b": b})
+
+
+@mcp.tool()
+def set_comment(ctx: Context, node_path: str, comment: str) -> str:
+    """Set a node's comment text. Requires a sandbox scene."""
+    return _call("set_comment", {"node_path": node_path, "comment": comment})
+
+
+@mcp.tool()
+def layout_children(ctx: Context, parent_path: str) -> str:
+    """Auto-layout a network's children. Requires a sandbox scene."""
+    return _call("layout_children", {"parent_path": parent_path})
+
+
+@mcp.tool()
+def set_display_flag(ctx: Context, node_path: str, on: bool) -> str:
+    """Set/clear a node's display flag. Requires a sandbox scene."""
+    return _call("set_display_flag", {"node_path": node_path, "on": on})
+
+
+@mcp.tool()
+def set_render_flag(ctx: Context, node_path: str, on: bool) -> str:
+    """Set/clear a node's render flag. Requires a sandbox scene."""
+    return _call("set_render_flag", {"node_path": node_path, "on": on})
+
+
+@mcp.tool()
+def set_bypass(ctx: Context, node_path: str, on: bool) -> str:
+    """Set/clear a node's bypass flag. Requires a sandbox scene."""
+    return _call("set_bypass", {"node_path": node_path, "on": on})
+
+
+@mcp.tool()
+def save_scene_as(ctx: Context) -> str:
+    """Bootstrap a never-saved scene into the sandbox
+    (C:/houdini_mcp_sandbox/mcp_<timestamp>.hip). No arguments. Only works
+    from a scene that has never been saved -- the one write command that
+    does NOT require an existing sandbox scene."""
+    return _call("save_scene_as", {})
+
+
+@mcp.tool()
+def viewport_snapshot(ctx: Context) -> str:
+    """OpenGL viewport snapshot of the current SceneViewer. No arguments.
+    Requires a sandbox scene and a pre-existing
+    C:/houdini_mcp_sandbox/_snapshots/ directory."""
+    return _call("viewport_snapshot", {})
+
+
 def main():
     mcp.run()
 
@@ -250,6 +360,11 @@ if __name__ == "__main__":
         "get_scene_info", "get_geometry_info", "get_node_errors",
         "get_node_type_parms", "list_node_types", "get_node_help",
         "get_network", "get_node_info", "describe_commands",
+        # Phase 2 write tools
+        "create_node", "connect_nodes", "set_parm", "set_expression",
+        "delete_node", "rename_node", "set_position", "set_color",
+        "set_comment", "layout_children", "set_display_flag",
+        "set_render_flag", "set_bypass", "save_scene_as", "viewport_snapshot",
     }
     if _bridge_tool_names != commands_spec.COMMAND_NAMES:
         missing_in_bridge = commands_spec.COMMAND_NAMES - _bridge_tool_names

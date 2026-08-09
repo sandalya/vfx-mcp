@@ -12,6 +12,7 @@ scripts/check_contract.py catches the same class of drift from outside,
 against the live running server.
 """
 
+from . import build
 from . import commands_spec
 from . import intro
 
@@ -28,6 +29,22 @@ _HANDLERS = {
     "get_network": intro.get_network,
     "get_node_info": intro.get_node_info,
     "describe_commands": intro.describe_commands,
+    # Phase 2: write commands (guarded, sandbox-only -- see build.py).
+    "create_node": build.create_node,
+    "connect_nodes": build.connect_nodes,
+    "set_parm": build.set_parm,
+    "set_expression": build.set_expression,
+    "delete_node": build.delete_node,
+    "rename_node": build.rename_node,
+    "set_position": build.set_position,
+    "set_color": build.set_color,
+    "set_comment": build.set_comment,
+    "layout_children": build.layout_children,
+    "set_display_flag": build.set_display_flag,
+    "set_render_flag": build.set_render_flag,
+    "set_bypass": build.set_bypass,
+    "save_scene_as": build.save_scene_as,
+    "viewport_snapshot": build.viewport_snapshot,
 }
 
 

@@ -131,8 +131,13 @@ CODE_PARMS_REFUSED = {
 NODE_TYPES_REFUSED = {"python", "pythonscript", "unix", "shell"}
 
 # Phase 1/2 restrict node creation to the categories the target domain
-# (SOP-level procedural geometry and VEX) actually needs.
-ALLOWED_NODE_CATEGORIES = {"Sop", "Obj"}
+# (SOP-level procedural geometry and VEX) actually needs. The obj context's
+# real category name is "Object", not "Obj" -- confirmed against
+# plugin/server.py:766 (`target_node.type().category().name() != "Object"`),
+# proven code from the old plugin. This was wrong at Phase 1 (unexercised,
+# since Phase 1 is read-only) and would have silently refused every /obj
+# node creation in Phase 2 -- fixed here before create_node's first caller.
+ALLOWED_NODE_CATEGORIES = {"Sop", "Object"}
 
 
 def check_creatable_node_type(type_name, category_name):

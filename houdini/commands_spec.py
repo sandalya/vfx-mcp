@@ -97,6 +97,129 @@ COMMANDS = [
             "used by scripts/check_contract.py to catch bridge/plugin drift."
         ),
     },
+    # Phase 2: write commands. Every one requires the open scene to already
+    # live under the sandbox (guards.require_sandbox_scene) -- except
+    # save_scene_as, the one-time bootstrap out of a never-saved scene.
+    {
+        "name": "create_node",
+        "kind": "write",
+        "params": {
+            "parent_path": "str",
+            "node_type": "str",
+            "name": "str | None = None",
+        },
+        "doc": (
+            "Create a node under parent_path. Category is derived from the "
+            "parent, restricted to Sop/Object (guards.ALLOWED_NODE_CATEGORIES). "
+            "No parameters dict -- use set_parm afterwards. Registers the new "
+            "node so delete_node can remove it later this session."
+        ),
+    },
+    {
+        "name": "connect_nodes",
+        "kind": "write",
+        "params": {
+            "from_path": "str",
+            "to_path": "str",
+            "input_index": "int = 0",
+        },
+        "doc": "Wire from_path's output into to_path's input_index-th input.",
+    },
+    {
+        "name": "set_parm",
+        "kind": "write",
+        "params": {"node_path": "str", "parm_name": "str", "value": "any"},
+        "doc": (
+            "Set a single parameter value. Refuses output-path parms "
+            "(sopoutput etc.), Python/callback/script parms, and any "
+            "file-type parm other than file/filepath -- see "
+            "guards.check_settable_parm."
+        ),
+    },
+    {
+        "name": "set_expression",
+        "kind": "write",
+        "params": {"node_path": "str", "parm_name": "str", "expression": "str"},
+        "doc": "Set an HScript expression on a parameter. Never Python.",
+    },
+    {
+        "name": "delete_node",
+        "kind": "write",
+        "params": {"node_path": "str"},
+        "doc": (
+            "Destroy a node -- only if the agent created it earlier this "
+            "session (guards.session_registry, keyed on sessionId())."
+        ),
+    },
+    {
+        "name": "rename_node",
+        "kind": "write",
+        "params": {"node_path": "str", "new_name": "str"},
+        "doc": "Rename a node.",
+    },
+    {
+        "name": "set_position",
+        "kind": "write",
+        "params": {"node_path": "str", "x": "float", "y": "float"},
+        "doc": "Set a node's network-view position.",
+    },
+    {
+        "name": "set_color",
+        "kind": "write",
+        "params": {"node_path": "str", "r": "float", "g": "float", "b": "float"},
+        "doc": "Set a node's network-view color.",
+    },
+    {
+        "name": "set_comment",
+        "kind": "write",
+        "params": {"node_path": "str", "comment": "str"},
+        "doc": "Set a node's comment text.",
+    },
+    {
+        "name": "layout_children",
+        "kind": "write",
+        "params": {"parent_path": "str"},
+        "doc": "Auto-layout a network's children (parent.layoutChildren()).",
+    },
+    {
+        "name": "set_display_flag",
+        "kind": "write",
+        "params": {"node_path": "str", "on": "bool"},
+        "doc": "Set/clear a node's display flag.",
+    },
+    {
+        "name": "set_render_flag",
+        "kind": "write",
+        "params": {"node_path": "str", "on": "bool"},
+        "doc": "Set/clear a node's render flag.",
+    },
+    {
+        "name": "set_bypass",
+        "kind": "write",
+        "params": {"node_path": "str", "on": "bool"},
+        "doc": "Set/clear a node's bypass flag.",
+    },
+    {
+        "name": "save_scene_as",
+        "kind": "write",
+        "params": {},
+        "doc": (
+            "Bootstrap a never-saved scene into the sandbox. No arguments -- "
+            "the plugin generates C:/houdini_mcp_sandbox/mcp_<timestamp>.hip. "
+            "The only write command that runs outside require_sandbox_scene "
+            "(gated instead by require_bootstrap_scene: never-saved only)."
+        ),
+    },
+    {
+        "name": "viewport_snapshot",
+        "kind": "write",
+        "params": {},
+        "doc": (
+            "OpenGL viewport snapshot of the current SceneViewer. No "
+            "arguments -- writes to a generated path under "
+            "C:/houdini_mcp_sandbox/_snapshots/ (must pre-exist)."
+        ),
+    },
 ]
 
 COMMAND_NAMES = {c["name"] for c in COMMANDS}
