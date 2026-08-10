@@ -38,6 +38,9 @@ NUKE_LITTLE_HELPERS_REMOTE_DIR='C:/Users/Admin/.nuke/little_helpers'
 NUKE_LITTLE_HELPERS_SPLIT_LAYERS_LOCAL_DIR="$LITTLE_HELPERS_REPO_DIR/split_layers"
 NUKE_LITTLE_HELPERS_SPLIT_LAYERS_REMOTE_DIR='C:/Users/Admin/.nuke/little_helpers/split_layers'
 
+NUKE_LITTLE_HELPERS_VERITER_LOCAL_DIR="$LITTLE_HELPERS_REPO_DIR/veriter"
+NUKE_LITTLE_HELPERS_VERITER_REMOTE_DIR='C:/Users/Admin/.nuke/little_helpers/veriter'
+
 TARGET="${1:-}"
 if [[ -z "$TARGET" || ! "$TARGET" =~ ^(houdini|hmcp|nuke|all)$ ]]; then
   echo "Usage: $0 <houdini|hmcp|nuke|all>" >&2
@@ -135,6 +138,8 @@ if [[ "$TARGET" == "nuke" || "$TARGET" == "all" ]]; then
   deploy_dir "$NUKE_LITTLE_HELPERS_LOCAL_DIR" "$NUKE_LITTLE_HELPERS_REMOTE_DIR"
   echo "=== little_helpers/split_layers ==="
   deploy_dir "$NUKE_LITTLE_HELPERS_SPLIT_LAYERS_LOCAL_DIR" "$NUKE_LITTLE_HELPERS_SPLIT_LAYERS_REMOTE_DIR" skip_backup
+  echo "=== little_helpers/veriter ==="
+  deploy_dir "$NUKE_LITTLE_HELPERS_VERITER_LOCAL_DIR" "$NUKE_LITTLE_HELPERS_VERITER_REMOTE_DIR" skip_backup
   echo "==> Clean stale __pycache__ under little_helpers (flat-import-era .pyc can shadow the new subpackage)"
   ssh pc137 "powershell -Command \"Get-ChildItem -Path '$NUKE_LITTLE_HELPERS_REMOTE_DIR' -Recurse -Filter '__pycache__' -Directory | Remove-Item -Recurse -Force\""
 fi
