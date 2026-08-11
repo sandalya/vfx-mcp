@@ -28,6 +28,13 @@ COMMANDS_SPEC_LOCAL="$REPO_ROOT/houdini/commands_spec.py"
 
 HMCP_LOCAL_TARGET_DIR="$HOME/Documents/houdini20.5/scripts/python/hmcp"
 
+# Shelf buttons (start/restart, stop). Own file, never default.shelf --
+# Houdini rewrites default.shelf on exit, so a tool parked there is a local
+# artifact no deploy can reproduce.
+HMCP_SHELF_LOCAL="$REPO_ROOT/houdini/shelf/hmcp.shelf"
+HMCP_SHELF_REMOTE='C:/Users/Admin/Documents/houdini21.0/toolbar/hmcp.shelf'
+HMCP_SHELF_LOCAL_TARGET="$HOME/Documents/houdini20.5/toolbar/hmcp.shelf"
+
 NUKE_LOCAL_DIR="$REPO_ROOT/nuke/plugin"
 NUKE_REMOTE_DIR='C:/Users/Admin/.nuke'
 NUKE_FILES=("nuke_mcp_plugin.py")
@@ -125,6 +132,9 @@ if [[ "$TARGET" == "hmcp" ]]; then
   done
   ssh pc137 "powershell -Command \"& '$HYTHON' -m py_compile '$HMCP_REMOTE_DIR/commands_spec.py'\""
 
+  echo "==> SCP hmcp.shelf -> pc137 toolbar (start/stop buttons; new tab needs adding by hand once)"
+  scp "$HMCP_SHELF_LOCAL" "pc137:$HMCP_SHELF_REMOTE"
+
   echo "==> check_contract.py (only meaningful once the plugin is running live; a connection failure here just means it isn't started yet)"
   "$REPO_ROOT/.venv/Scripts/python.exe" "$REPO_ROOT/scripts/check_contract.py" || echo "    (non-fatal at deploy time -- see message above)"
 fi
@@ -149,6 +159,10 @@ if [[ "$TARGET" == "hmcp-local" ]]; then
     echo "    - $(basename "$f")"
     "$HYTHON_LOCAL" -m py_compile "$f"
   done
+
+  echo "==> Copy hmcp.shelf -> $HMCP_SHELF_LOCAL_TARGET (start/stop buttons; new tab needs adding by hand once)"
+  mkdir -p "$(dirname "$HMCP_SHELF_LOCAL_TARGET")"
+  cp "$HMCP_SHELF_LOCAL" "$HMCP_SHELF_LOCAL_TARGET"
 
   echo "==> check_contract.py against local Houdini (HMCP_HOST=127.0.0.1; non-fatal if not started yet)"
   HMCP_HOST=127.0.0.1 "$REPO_ROOT/.venv/Scripts/python.exe" "$REPO_ROOT/scripts/check_contract.py" || echo "    (non-fatal at deploy time -- see message above)"

@@ -195,13 +195,30 @@ To switch to local mode:
 1. `./scripts/deploy_plugin.sh hmcp-local` (copies the plugin to
    `Documents/houdini20.5/scripts/python/hmcp/` on this machine, py_compiles
    it with the local hython).
-2. Open local Houdini, load/create a sandbox scene, in its Python Shell:
-   `import hmcp; hmcp.start_server()`.
+2. Open local Houdini, load/create a sandbox scene, press the **`hmcp start`**
+   shelf button (below).
 3. Edit `~/.claude.json` (this machine: `C:\Users\gamai\.claude.json`) --
    under `projects."C:/Users/gamai/vfx-mcp".mcpServers.houdini2.env`, set:
    `{"HMCP_HOST": "127.0.0.1"}` (the key already exists as an empty `{}`).
 4. Restart the Claude Code session (MCP servers are spawned at session
    start; env vars only take effect on a fresh subprocess launch).
+
+### Starting the plugin: use the shelf buttons
+
+`houdini/shelf/hmcp.shelf` ships two tools — **`hmcp start`** (start, or
+restart against freshly deployed code: it purges every `hmcp*` module from
+`sys.modules` first, so a deploy lands without restarting Houdini) and
+**`hmcp stop`**. Both deploy targets copy it into the machine's
+`toolbar/` dir; the shelf *tab* has to be added to the shelf set by hand once
+per machine (the `+` at the right of the shelf tabs → `hmcp`).
+
+Prefer these over typing `start_server()` in the Python Shell. Shelf tools run
+on Houdini's **main thread**; the Python Shell pane does not, and starting the
+server from a non-main thread is exactly what made local mode deaf — the
+`QTimer` fallback pump never fires there. The current pump
+(`hou.ui.addEventLoopCallback`) is immune either way, but the buttons keep it
+that way for free, and they also mean a redeploy is one click instead of a
+hand-typed reload over RDP.
 
 To go back to mode 1: set that `env` block back to `{}` (or remove
 `HMCP_HOST`) and restart Claude Code again.

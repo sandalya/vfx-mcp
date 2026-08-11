@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<shelfDocument>
+  <!-- hmcp shelf, deployed from the repo by scripts/deploy_plugin.sh
+       (targets "hmcp" and "hmcp-local"). Kept in its own file, not in
+       default.shelf, because Houdini rewrites default.shelf on exit: a tool
+       parked there is a local artifact no deploy can reproduce.
+
+       Shelf tools run on Houdini's MAIN THREAD. That is the whole point of
+       preferring these buttons over typing start_server() in the Python
+       Shell pane, which does not run in the main thread (see
+       houdini/docs/HMCP_LOCAL_TIMEOUT_TRIAGE.md).
+
+       One-time step per machine: the shelf tab has to be added to the shelf
+       set by hand once (the "+" at the right of the shelf tabs -> hmcp).
+       Houdini records that in default.shelf as a shelfSetEdit. -->
+
+  <toolshelf name="hmcp" label="hmcp">
+    <memberTool name="hmcp_restart"/>
+    <memberTool name="hmcp_stop"/>
+  </toolshelf>
+
+  <tool name="hmcp_restart" label="hmcp start" icon="BUTTONS_reload">
+    <helpText><![CDATA[Start the hmcp server, or restart it against the
+freshly deployed code. Safe to press at any time.]]></helpText>
+    <script scriptType="python"><![CDATA[import sys
+
+# Stop whatever is running first, using the module already in memory --
+# a failure here must not block the restart, so it is swallowed loudly.
+if "hmcp" in sys.modules:
+    try:
+        sys.modules["hmcp"].stop_server()
+    except Exception as e:
+        print(f"hmcp: stop failed, restarting anyway: {e}")
+
+# Full purge rather than importlib.reload: this also picks up changes to
+# commands.py / guards.py / commands_spec.py from the latest deploy, not
+# just server.py.
+for name in [n for n in list(sys.modules) if n == "hmcp" or n.startswith("hmcp.")]:
+    del sys.modules[name]
+
+import hmcp
+
+hmcp.start_server()
+hmcp.status()]]></script>
+  </tool>
+
+  <tool name="hmcp_stop" label="hmcp stop" icon="BUTTONS_stop">
+    <helpText><![CDATA[Stop the hmcp server. Houdini keeps running.]]></helpText>
+    <script scriptType="python"><![CDATA[import sys
+
+if "hmcp" in sys.modules:
+    sys.modules["hmcp"].stop_server()
+else:
+    print("hmcp: not loaded in this session, nothing to stop")]]></script>
+  </tool>
+</shelfDocument>
