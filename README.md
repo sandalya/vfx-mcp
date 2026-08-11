@@ -184,6 +184,13 @@ Two modes, same tools, same plugin code — only the target machine changes:
 No plugin-side change is needed for local mode: `hmcp.start_server()` already
 binds `0.0.0.0`, and `127.0.0.1` is already in the plugin's `ALLOWED_CLIENTS`.
 
+The plugin's audit/diagnostic log is `hmcp_audit.log` under Houdini's own
+prefs dir (`hou.homeHoudiniDirectory()`) — per machine, per user, so each
+mode writes locally. `hmcp.status()` in Houdini's Python Shell reports
+`running / pump / ticks / client / address / log`; `ticks` must climb between
+two calls or the server is listening but deaf (see
+`houdini/docs/HMCP_LOCAL_TIMEOUT_TRIAGE.md`).
+
 To switch to local mode:
 1. `./scripts/deploy_plugin.sh hmcp-local` (copies the plugin to
    `Documents/houdini20.5/scripts/python/hmcp/` on this machine, py_compiles
