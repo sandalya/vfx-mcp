@@ -9,10 +9,25 @@ deploy succeeds) — before moving to the next thing — append one line to
 `BACKLOG.md` under `## Done`:
 
 ```
-- [x] YYYY-MM-DD — <what, one line>
+- [x] YYYY-MM-DD — <what, one line, one sentence>
 ```
 
-That's the log. No separate write-up, no memory update unless the user asks.
+Keep it to what changed and whether it's verified — no incident narrative, no
+"how we found it," no alternatives tried. `BACKLOG.md` is a fast scan of
+*what and when*, not a debugging diary; it gets read fresh every session, so
+weight here is paid every time.
+
+Anything more detailed (why, how it was diagnosed, dead ends, gotchas) goes in
+the **commit message body** instead. Git history costs nothing until someone
+explicitly asks for it (`git log`, `git show <sha>`) — that's where the full
+story belongs.
+
+`README.md` and nested docs (`houdini/docs/*`, `nuke/docs/*`) describe
+*current state* — edit them in place when behavior changes. Don't leave the
+superseded description next to the new one "for history"; that's what git
+blame is for.
+
+No memory update unless the user asks.
 
 ## Safety rules (shared, both stacks)
 
