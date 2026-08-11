@@ -1,7 +1,7 @@
 """
 server.py — transport plus dispatch over commands.REGISTRY.
 
-Socket accept loop, PySide6 QTimer main-thread pump, IP allowlist, and the
+Socket accept loop, PySide QTimer main-thread pump, IP allowlist, and the
 audit-log writer are ported deliberately from the old plugin
 (houdini/plugin/server.py) -- that networking code is proven, this
 rewrite only changes what commands exist and how they're dispatched.
@@ -17,7 +17,12 @@ import socket
 import traceback
 from datetime import datetime
 
-from PySide6 import QtCore
+try:
+    from PySide6 import QtCore
+except ImportError:
+    # Houdini 20.5 (local machine) ships PySide2; 21.0 (pc137) ships PySide6.
+    # QTimer's API is identical across both -- no behavior difference below.
+    from PySide2 import QtCore
 
 from .commands import REGISTRY
 

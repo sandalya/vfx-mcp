@@ -1,15 +1,17 @@
 #!/usr/bin/env bash
 # Deploy plugin code to pc137, with a timestamped backup before every
 # file overwrite.
-# Usage: ./scripts/deploy_plugin.sh <houdini|hmcp|nuke|all>
-# Requires: ssh pc137 alias configured, VPN up.
+# Usage: ./scripts/deploy_plugin.sh <houdini|hmcp|hmcp-local|nuke|all>
+# Requires: ssh pc137 alias configured, VPN up (not needed for hmcp-local).
 #
 # "houdini" deploys the OLD plugin (port 9876, untouched, still in
 # production use). "hmcp" deploys the NEW plugin package under rewrite
 # (houdini/docs/HOUDINI_MCP_REWRITE_PLAN.md; port 9878, separate process,
 # separate sandbox-only write boundary). "all" does not include hmcp --
 # it's opted into explicitly until Phase 3 passes and the old plugin is
-# retired.
+# retired. "hmcp-local" deploys the same hmcp package to THIS machine's own
+# local Houdini (20.5.278), for the no-VPN/loopback workflow -- set
+# HMCP_HOST=127.0.0.1 on the bridge side to talk to it (see README.md).
 
 set -euo pipefail
 
@@ -23,6 +25,8 @@ HOUDINI_FILES=("server.py" "HoudiniMCPRender.py")
 HMCP_LOCAL_DIR="$REPO_ROOT/houdini/plugin/hmcp"
 HMCP_REMOTE_DIR='C:/Users/Admin/Documents/houdini21.0/scripts/python/hmcp'
 COMMANDS_SPEC_LOCAL="$REPO_ROOT/houdini/commands_spec.py"
+
+HMCP_LOCAL_TARGET_DIR="$HOME/Documents/houdini20.5/scripts/python/hmcp"
 
 NUKE_LOCAL_DIR="$REPO_ROOT/nuke/plugin"
 NUKE_REMOTE_DIR='C:/Users/Admin/.nuke'
@@ -42,8 +46,8 @@ NUKE_LITTLE_HELPERS_VERITER_LOCAL_DIR="$LITTLE_HELPERS_REPO_DIR/veriter"
 NUKE_LITTLE_HELPERS_VERITER_REMOTE_DIR='C:/Users/Admin/.nuke/little_helpers/veriter'
 
 TARGET="${1:-}"
-if [[ -z "$TARGET" || ! "$TARGET" =~ ^(houdini|hmcp|nuke|all)$ ]]; then
-  echo "Usage: $0 <houdini|hmcp|nuke|all>" >&2
+if [[ -z "$TARGET" || ! "$TARGET" =~ ^(houdini|hmcp|hmcp-local|nuke|all)$ ]]; then
+  echo "Usage: $0 <houdini|hmcp|hmcp-local|nuke|all>" >&2
   exit 1
 fi
 
@@ -88,11 +92,13 @@ deploy_dir() {
   scp "$local_dir"/*.py "pc137:$remote_dir/"
 }
 
-echo "==> Reachability check"
-ssh -o BatchMode=yes -o ConnectTimeout=5 pc137 'echo ok' >/dev/null || {
-  echo "ERROR: cannot reach pc137. VPN up? ssh config correct?" >&2
-  exit 1
-}
+if [[ "$TARGET" != "hmcp-local" ]]; then
+  echo "==> Reachability check"
+  ssh -o BatchMode=yes -o ConnectTimeout=5 pc137 'echo ok' >/dev/null || {
+    echo "ERROR: cannot reach pc137. VPN up? ssh config correct?" >&2
+    exit 1
+  }
+fi
 
 if [[ "$TARGET" == "houdini" || "$TARGET" == "all" ]]; then
   echo "=== Houdini plugin ==="
@@ -121,6 +127,31 @@ if [[ "$TARGET" == "hmcp" ]]; then
 
   echo "==> check_contract.py (only meaningful once the plugin is running live; a connection failure here just means it isn't started yet)"
   "$REPO_ROOT/.venv/Scripts/python.exe" "$REPO_ROOT/scripts/check_contract.py" || echo "    (non-fatal at deploy time -- see message above)"
+fi
+
+if [[ "$TARGET" == "hmcp-local" ]]; then
+  echo "=== hmcp plugin (LOCAL machine, Houdini 20.5, no VPN) ==="
+  echo "==> Ensure $HMCP_LOCAL_TARGET_DIR exists"
+  mkdir -p "$HMCP_LOCAL_TARGET_DIR"
+  echo "==> Copy $HMCP_LOCAL_DIR/*.py -> $HMCP_LOCAL_TARGET_DIR"
+  cp "$HMCP_LOCAL_DIR"/*.py "$HMCP_LOCAL_TARGET_DIR/"
+
+  if [ ! -f "$COMMANDS_SPEC_LOCAL" ]; then
+    echo "ERROR: commands_spec.py not found at $COMMANDS_SPEC_LOCAL" >&2
+    exit 1
+  fi
+  echo "==> Copy commands_spec.py -> $HMCP_LOCAL_TARGET_DIR"
+  cp "$COMMANDS_SPEC_LOCAL" "$HMCP_LOCAL_TARGET_DIR/commands_spec.py"
+
+  HYTHON_LOCAL='C:\Program Files\Side Effects Software\Houdini 20.5.278\bin\hython.exe'
+  echo "==> hython -m py_compile every file in the local hmcp package"
+  for f in "$HMCP_LOCAL_TARGET_DIR"/*.py; do
+    echo "    - $(basename "$f")"
+    "$HYTHON_LOCAL" -m py_compile "$f"
+  done
+
+  echo "==> check_contract.py against local Houdini (HMCP_HOST=127.0.0.1; non-fatal if not started yet)"
+  HMCP_HOST=127.0.0.1 "$REPO_ROOT/.venv/Scripts/python.exe" "$REPO_ROOT/scripts/check_contract.py" || echo "    (non-fatal at deploy time -- see message above)"
 fi
 
 if [[ "$TARGET" == "nuke" || "$TARGET" == "all" ]]; then
@@ -164,6 +195,20 @@ if [[ "$TARGET" == "hmcp" ]]; then
   echo "       hmcp.start_server()"
   echo "  Then re-run: ./scripts/check_contract.py to confirm the live"
   echo "  plugin agrees with houdini/commands_spec.py."
+  echo
+fi
+
+if [[ "$TARGET" == "hmcp-local" ]]; then
+  echo "Next steps for hmcp-local (this machine, no VPN):"
+  echo "  1. Open local Houdini 20.5, load/create a sandbox scene."
+  echo "  2. In its Python Shell:"
+  echo "       import hmcp"
+  echo "       hmcp.start_server()"
+  echo "  3. Re-run:  HMCP_HOST=127.0.0.1 ./scripts/check_contract.py"
+  echo "  4. In ~/.claude.json, under this project's mcpServers.houdini2.env,"
+  echo "     set: {\"HMCP_HOST\": \"127.0.0.1\"}, then restart Claude Code"
+  echo "     (see README.md)."
+  echo "  Remove/unset HMCP_HOST later to go back to pc137 over VPN."
   echo
 fi
 

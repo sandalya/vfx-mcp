@@ -45,7 +45,7 @@ import asyncio
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("HmcpBridge")
 
-HOST = "10.10.10.31"
+HOST = os.environ.get("HMCP_HOST", "10.10.10.31")
 PORT = 9878
 
 

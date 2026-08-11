@@ -28,6 +28,15 @@ import re
 SANDBOX_ROOT = "c:/houdini_mcp_sandbox/"
 SNAPSHOT_DIR = "c:/houdini_mcp_sandbox/_snapshots/"  # must pre-exist; plugin never creates it
 
+# Opt-in escape hatch for scenes that live in a real project tree (not under
+# SANDBOX_ROOT) but are still safe to let hmcp write to -- e.g. a personal
+# test .hip kept alongside its project instead of relocated. Set via
+# Houdini's Edit > Variables (or `hou.setVariable("hmcp", "1")`) on a
+# per-scene basis; it's a value baked into that one .hip, not a global
+# switch, so it doesn't widen the boundary for any other scene.
+OPT_IN_VARIABLE = "hmcp"
+OPT_IN_VALUE = "1"
+
 # Houdini's default path for a session that has never been saved. Used as a
 # fallback for the "never saved" check if hou.hipFile.isNewFile() is ever
 # unavailable (confirmed present in 21.0.596 via hython, but checked
@@ -55,12 +64,33 @@ def is_never_saved_scene():
     return _normalize(name).endswith(_normalize(_DEFAULT_UNTITLED_PATH))
 
 
+def _scene_variable(name):
+    """Value of a variable from Houdini's own global-variable table --
+    the ones set via Edit > Variables / `set -g`, saved inside the .hip.
+
+    Deliberately not `hou.getenv`: that falls back to the OS process
+    environment when the name isn't a scene variable, which would let an
+    unrelated ambient env var of the same name satisfy the sandbox check
+    below. `hscript("set")` only lists the scene's own table."""
+    import hou
+
+    out, _ = hou.hscript("set")
+    for line in out.splitlines():
+        parts = line.split("\t", 1)
+        if len(parts) == 2 and parts[0] == name:
+            return parts[1].lstrip("= ").strip()
+    return None
+
+
 def is_sandbox_scene():
-    """True if the open .hip lives under SANDBOX_ROOT."""
+    """True if the open .hip lives under SANDBOX_ROOT, or the scene opted in
+    via its own `hmcp = 1` scene variable (see OPT_IN_VARIABLE above)."""
     import hou
 
     path = hou.hipFile.path() or ""
-    return _normalize(path).startswith(_normalize(SANDBOX_ROOT))
+    if _normalize(path).startswith(_normalize(SANDBOX_ROOT)):
+        return True
+    return _scene_variable(OPT_IN_VARIABLE) == OPT_IN_VALUE
 
 
 def require_sandbox_scene():
@@ -76,9 +106,11 @@ def require_sandbox_scene():
 
         raise PermissionError(
             f"Refused: this write command only runs when the open scene "
-            f"lives under {SANDBOX_ROOT}. Current scene: "
-            f"{hou.hipFile.path()!r}. Call save_scene_as() from a "
-            f"never-saved scene to bootstrap into the sandbox."
+            f"lives under {SANDBOX_ROOT}, or has its own "
+            f"{OPT_IN_VARIABLE!r} scene variable set to {OPT_IN_VALUE!r}. "
+            f"Current scene: {hou.hipFile.path()!r}. Call save_scene_as() "
+            f"from a never-saved scene to bootstrap into the sandbox, or "
+            f"set the {OPT_IN_VARIABLE!r} variable on this scene instead."
         )
 
 

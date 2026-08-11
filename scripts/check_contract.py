@@ -21,7 +21,7 @@ import os
 import socket
 import sys
 
-HOST = "10.10.10.31"
+HOST = os.environ.get("HMCP_HOST", "10.10.10.31")
 PORT = 9878
 TIMEOUT = 10
 

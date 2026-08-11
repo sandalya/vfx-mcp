@@ -163,6 +163,61 @@ houdinimcp.start_server(host='0.0.0.0')
 
 ---
 
+## hmcp connection modes: pc137/VPN vs. local Houdini
+
+The hmcp bridge (`houdini/bridge/hmcp_bridge.py`, port 9878, registered as
+`houdini2` in **Claude Code's** MCP config -- not Claude Desktop, which only
+has the old `houdini`/9876 entry) reads its target host from the `HMCP_HOST`
+env var, defaulting to pc137's VPN address if unset:
+
+```python
+HOST = os.environ.get("HMCP_HOST", "10.10.10.31")
+```
+
+Two modes, same tools, same plugin code — only the target machine changes:
+
+| Mode | Houdini runs on | `HMCP_HOST` | Deploy with |
+|---|---|---|---|
+| 1. Remote (default) | pc137, over VPN | unset | `./scripts/deploy_plugin.sh hmcp` |
+| 2. Local | this machine (SASHOKPC), Houdini 20.5.278, loopback | `127.0.0.1` | `./scripts/deploy_plugin.sh hmcp-local` |
+
+No plugin-side change is needed for local mode: `hmcp.start_server()` already
+binds `0.0.0.0`, and `127.0.0.1` is already in the plugin's `ALLOWED_CLIENTS`.
+
+To switch to local mode:
+1. `./scripts/deploy_plugin.sh hmcp-local` (copies the plugin to
+   `Documents/houdini20.5/scripts/python/hmcp/` on this machine, py_compiles
+   it with the local hython).
+2. Open local Houdini, load/create a sandbox scene, in its Python Shell:
+   `import hmcp; hmcp.start_server()`.
+3. Edit `~/.claude.json` (this machine: `C:\Users\gamai\.claude.json`) --
+   under `projects."C:/Users/gamai/vfx-mcp".mcpServers.houdini2.env`, set:
+   `{"HMCP_HOST": "127.0.0.1"}` (the key already exists as an empty `{}`).
+4. Restart the Claude Code session (MCP servers are spawned at session
+   start; env vars only take effect on a fresh subprocess launch).
+
+To go back to mode 1: set that `env` block back to `{}` (or remove
+`HMCP_HOST`) and restart Claude Code again.
+
+`scripts/check_contract.py` respects the same `HMCP_HOST` env var, so
+`HMCP_HOST=127.0.0.1 ./scripts/check_contract.py` verifies the local plugin
+independent of Claude Code/Desktop -- or just `./scripts/check_contract_local.sh`,
+a one-line wrapper that already sets `HMCP_HOST` for you.
+
+### Opt-in sandbox for project scenes (not just SANDBOX_ROOT)
+
+`houdini/plugin/hmcp/guards.py`'s write boundary (`is_sandbox_scene`) accepts
+a scene either because its `.hip` lives under `c:/houdini_mcp_sandbox/`, or
+because the scene itself has a global variable `hmcp = 1` set (Edit >
+Variables in Houdini, or `hou.hscript("set -g hmcp = 1")`). That variable is
+saved inside the .hip, so a project-tree scene can opt in individually
+without being moved into the sandbox folder. Deliberately checked via
+`hscript("set")` (the scene's own variable table), not `hou.getenv` --
+`getenv` falls back to the OS process environment, which would let an
+unrelated ambient env var of the same name satisfy the check.
+
+---
+
 ## Nuke MCP bridge
 
 Second bridge/plugin pair, same shape as the Houdini one above, running
