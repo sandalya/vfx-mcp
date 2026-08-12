@@ -1399,6 +1399,52 @@ edit by Sashok between two agent calls makes the next `delete_node` refuse
 with the watermark message, not silently succeed; `check_contract.py`
 reports 33 commands agreeing against the live plugin.
 
+### Stage 5 — live-verified (2026-08-12)
+
+All items above confirmed live (local 20.5.278) via the running `houdini2`
+bridge session already open in Claude Code:
+
+- `find_nodes`: `name_filter="hmcp"` → 3 real matches; `type_filter="cam"` →
+  1 match; `root="/obj", max_results=2` → 2 results + `truncated: true`,
+  correctly recursing into a SOP subnet (`get_network` can't, one level at
+  a time); a filter matching nothing → `nodes: []`, not an error.
+- `delete_node` positive case: create → delete immediately (nothing else
+  touched the scene) → succeeds.
+- `delete_node` watermark refusal: created a test node, Sashok made a
+  manual edit in Houdini, `delete_node` on the agent-created node refused
+  with `"the scene's undo stack has moved since hmcp's last write..."`.
+  Then confirmed the documented re-arm behavior (not in the original
+  checklist, checked anyway): one more hmcp write (`set_color`) on the
+  same node re-armed the watermark, and the next `delete_node` on it
+  succeeded cleanly.
+
+**`check_contract.py` — real finding, not run as originally planned.** Both
+`check_contract.py` (pc137 host) and `check_contract_local.sh` (127.0.0.1)
+failed to connect (`ConnectionRefusedError`, then `TimeoutError`) even
+though the bridge itself was live and answering calls throughout. Root
+cause, confirmed via `netstat` (single listener PID, one `ESTABLISHED`
+connection, my two probes stuck in `CLOSE_WAIT`) plus reading
+`server.py:183-231`: `_process_server()` only calls `self.socket.accept()`
+when `self.client` is empty — the plugin serves **one client connection at
+a time**, by design (comment at `server.py:110-116`). `hmcp_bridge.py`
+holds a persistent singleton connection (`get_hmcp_connection()`,
+`_hmcp_connection` module global, never disconnects between tool calls),
+so for the entire life of a Claude Code session with the `houdini2` bridge
+connected, that single client slot is permanently occupied — any second,
+independent socket client (`check_contract.py` included) can never be
+accept()ed, and times out. Not the previously-documented orphaned-listener
+bug (only one PID here); a new, real interaction between the bridge's
+connection-reuse design and the plugin's single-client accept loop.
+Worked around for this verification by diffing the bridge's own live
+`describe_commands` response against `commands_spec.COMMAND_NAMES`
+directly — **33/33 agree**, same check `check_contract.py` performs, just
+over the bridge's existing connection instead of a fresh socket. No code
+changed; `check_contract.py` remains correct for its intended use
+(deploy-time check with no bridge session open) but cannot run alongside a
+live Claude Code session. Flagged in `## TODO` in `BACKLOG.md`.
+
+Stage 5 fully closed, no open checklist items remain.
+
 ---
 
 ## 6. Deploy and verification mechanics — every stage
