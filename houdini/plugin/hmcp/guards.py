@@ -251,6 +251,80 @@ def check_viewport_camera_free(viewport):
 
 
 # ---------------------------------------------------------------------------
+# Render -- Stage 3 (houdini/docs/HMCP_FEEDBACK_LOOP_PLAN.md)
+# ---------------------------------------------------------------------------
+
+RENDER_DIR = "c:/houdini_mcp_sandbox/_renders/"  # must pre-exist; plugin never creates it
+
+# D7: one descriptor table, keyed on renderer name, not per-renderer
+# branches. Every field below is a real parm name read live from
+# get_node_type_parms("karma", "Driver") against the running pc137
+# session (Stage 0d, re-confirmed live again before this stage was
+# written) -- never guessed, never from HoudiniMCPRender.py's guessed
+# names. mantra/ifd deliberately has no entry and is not in
+# ALLOWED_RENDERERS: Stage 0d found its render silently produces no file
+# and no rop.errors() -- an unsolved mystery, not a missing feature. Add
+# it back only once that mystery has its own investigation.
+RENDERERS = {
+    "karma": {
+        "rop_type": "karma",
+        "picture_parm": "picture",
+        "camera_parm": "camera",
+        "resolution_parm": "resolution",  # Int x2 tuple
+        "samples_parm": "samplesperpixel",
+        "frame_parm": "f",  # Float x3 tuple: f1/f2/f3 (start/end/inc)
+        "trange_parm": "trange",
+        "trange_off_value": 0,
+        "force_headlight_parm": "force_headlight",
+    },
+}
+ALLOWED_RENDERERS = set(RENDERERS)  # {"karma"}
+
+RENDER_OUTPUT_PARMS = {desc["picture_parm"] for desc in RENDERERS.values()}
+
+RENDER_QUALITY = {
+    "draft": {"width": 512, "height": 512, "samples": 4},
+    "preview": {"width": 960, "height": 540, "samples": 9},
+}
+
+
+def render_dir_exists():
+    """True if RENDER_DIR exists on disk -- the owner's physical kill
+    switch (plan Stage 3a): no _renders/ means render_snapshot refuses
+    cleanly, no code change or deploy needed to arm/disarm it.
+
+    The one permitted filesystem read (module docstring rule 3): open()
+    on the directory itself, in binary mode, and inspect which exception
+    it raises. A missing path raises FileNotFoundError. An existing
+    directory raises some other OSError (PermissionError on Windows,
+    IsADirectoryError on POSIX) because you cannot read a directory as a
+    file -- that failure IS the positive signal. No `os.path.isdir`, no
+    `import os` (rule 3)."""
+    try:
+        open(RENDER_DIR, "rb")
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return True
+    return True  # pragma: no cover -- a directory would never open cleanly
+
+
+def set_render_output(node, parm_name, path):
+    """The only place a render output-path parm is written. Asserts
+    parm_name is a picture parm this table knows about and that path
+    lives under RENDER_DIR before calling parm.set() -- same shape as
+    the sandbox-boundary check, kept in one reviewable function per this
+    file's own module docstring (rule 7). check_settable_parm is
+    deliberately untouched: the generic set_parm path still refuses
+    every one of these parm names exactly as it does today (rule 8)."""
+    if parm_name not in RENDER_OUTPUT_PARMS:
+        raise ValueError(f"Refused: {parm_name!r} is not a known render output parm.")
+    if not _normalize(path).startswith(_normalize(RENDER_DIR)):
+        raise ValueError(f"Refused: render output path must live under {RENDER_DIR}.")
+    node.parm(parm_name).set(path)
+
+
+# ---------------------------------------------------------------------------
 # Session-scoped deletion registry
 # ---------------------------------------------------------------------------
 

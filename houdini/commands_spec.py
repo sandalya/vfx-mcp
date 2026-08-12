@@ -279,6 +279,39 @@ COMMANDS = [
             "fixed."
         ),
     },
+    # Stage 3: non-blocking render. Two commands because the render runs
+    # out-of-process (D3) -- render_snapshot spawns and returns
+    # immediately, render_status polls the single pending slot.
+    {
+        "name": "render_snapshot",
+        "kind": "write",
+        "params": {
+            "renderer": "str = 'karma'",
+            "quality": "str = 'draft'",
+            "camera": "str = 'viewport'",
+        },
+        "doc": (
+            "Render a still frame in the background and return "
+            "immediately -- call render_status() to poll it. "
+            "renderer: only 'karma'. quality: 'draft' (512x512) or "
+            "'preview' (960x540). camera: 'viewport' (default, GUI only, "
+            "copies the SceneViewer's current camera) or 'fit' (headless-"
+            "safe, frames every displayed /obj node). Requires a sandbox "
+            "scene and a pre-existing c:/houdini_mcp_sandbox/_renders/ "
+            "directory (must be created by hand -- the plugin never "
+            "creates directories)."
+        ),
+    },
+    {
+        "name": "render_status",
+        "kind": "read",
+        "params": {},
+        "doc": (
+            "Poll the single pending render_snapshot slot. No arguments. "
+            "Returns done/path/seconds_elapsed/errors/warnings, or "
+            "pending: false if nothing is pending. Never raises."
+        ),
+    },
 ]
 
 COMMAND_NAMES = {c["name"] for c in COMMANDS}

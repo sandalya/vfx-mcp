@@ -172,7 +172,7 @@ Fill this in as you go; it is how the next session knows where you stopped.
 | 0 | Fact-finding probe, no code | **done** 2026-08-12 — all of 0a–0e answered; net new finding: unsaved-changes precondition + auto-save fix + `executebackground` not near-instant (D3 addendum); Mantra recommended excluded from Stage 3's initial renderer set |
 | 1 | Diagnosis + shared plumbing | **done** 2026-08-12 — live-verified on local 20.5.278; pc137 deploy/verify still pending |
 | 2 | Camera control | **done** 2026-08-12 — all 6 commands live-verified and shipped (24 → 30). `viewport_orbit` briefly shipped without, then root-caused (HOM's rotation()/translation() docs are wrong -- confirmed via SideFX staff) and fixed same day |
-| 3 | Non-blocking `render_snapshot` | not started |
+| 3 | Non-blocking `render_snapshot` | **code written** 2026-08-12 — see Stage 3's own implementation-status note below; live verification pending a Houdini reload |
 | 4 | Image delivery from pc137 | not started |
 | 5 | `find_nodes` + undo-revision guard | not started |
 
@@ -1069,6 +1069,61 @@ Two `commands_spec.py` entries, two `_HANDLERS` lines, two bridge tools plus
 `render_snapshot` stays prompt-gated. `deploy_plugin.sh` needs no change —
 `deploy_dir` already globs `*.py` (`:99`) and the py_compile loop iterates
 the directory (`:128-132`).
+
+### Stage 3 — implementation status (2026-08-12)
+
+All code written per §3a–3g, before which the two tails from the Stage
+1/2 session were closed first: pc137 was deployed with Stage 1/2 code
+(`./scripts/deploy_plugin.sh hmcp`, `py_compile` clean on every file;
+`check_contract.py` itself still needs a live reload to confirm, same as
+every prior stage) and `_renders/` was created by hand on both machines
+(`c:/houdini_mcp_sandbox/_renders/`) — checked `$JOB` as an alternative
+first and rejected it: on pc137, `hou.getenv("JOB")` resolves to the
+Houdini install's own `bin/` directory even with a real sandbox hip
+loaded (only `$HIP` tracks the sandbox per-scene, and that's redundant
+with the already-hardcoded `SANDBOX_ROOT`), so the literal path stayed
+hardcoded exactly as designed.
+
+The D7 renderer descriptor table was re-confirmed live (not reused
+blindly from Stage 0d's write-up) via a fresh `get_node_type_parms`
+call against the running pc137 session: `resolution`/`camera`/`picture`/
+`f`/`trange`/`executebackground`/`force_headlight` all match, plus the
+one name Stage 0d's table didn't record — `samplesperpixel` ("Primary
+Samples") is what `RENDER_QUALITY`'s `samples` field drives. (Karma also
+has a separate `override_camerares`/`res_override`/`res_fraction` group,
+apparently for a different resolution-override path; left untouched
+since the plan only ever named `resolution` and touching an unverified
+second mechanism would be exactly the kind of guessing rule 10 forbids.)
+
+`camera="fit"`'s math was rewritten, not ported 1:1: instead of the old
+plugin's per-axis-rotation branching (`HoudiniMCPRender.py:341-421`), it
+uses the collective world bbox's bounding-sphere radius (half the
+diagonal) and `distance = radius / sin(min_fov/2)`, which guarantees
+full containment for any fixed viewing angle -- a strict generalisation,
+and simpler. `hou.BoundingBox.enlargeToContain`/`.sizevec`/`.center`,
+`hou.Vector3.length`, and the default `cam` node's parm names
+(`aperture`/`focal`/`aspect`/`projection`/`resx`/`resy`/`orthowidth`)
+were all confirmed live via `hython` against pc137 before writing code
+that depends on them, rather than assumed from the old plugin.
+
+Verified so far, **locally, without a running Houdini** (same shape as
+Stage 2's own pre-live verification):
+- `hython -m py_compile` clean on every file, via
+  `./scripts/deploy_plugin.sh hmcp-local`
+- `hmcp.commands.REGISTRY` builds cleanly to **32** entries (30 → 32)
+  from a deploy-shaped copy, including `render_snapshot`/`render_status`
+- `hmcp_bridge.py`'s `_bridge_tool_names` cross-checked against
+  `commands_spec.COMMAND_NAMES` — matches exactly, 32/32
+- `rg -nE "os\.remove|shutil|unlink|rmtree|requests|subprocess|zipfile|import os"` →
+  zero real hits (only pre-existing module-docstring mentions)
+- `rg "getattr\(hou"` → zero hits
+- `.claude/settings.local.json` auto-allows only `render_status`, per §3g
+
+**Not yet done, needs a live Houdini session (blocked on the owner, rule
+9):** the plugin must be reloaded (`hmcp.shelf` Start button) on
+whichever machine verification runs against, then Claude Code/Desktop
+restarted (this stage adds commands, per §6) — then the full done-when
+checklist below, starting with the negative cases.
 
 ### Stage 3 — done when
 

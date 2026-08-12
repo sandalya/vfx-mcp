@@ -15,6 +15,7 @@ against the live running server.
 from . import build
 from . import commands_spec
 from . import intro
+from . import render
 
 # The only hand-maintained mapping in this file: command name -> Python
 # callable. Every name here must also appear in commands_spec.COMMANDS,
@@ -52,6 +53,9 @@ _HANDLERS = {
     "viewport_set_view": build.viewport_set_view,
     "viewport_orbit": build.viewport_orbit,
     "viewport_dolly": build.viewport_dolly,
+    # Stage 3: non-blocking render.
+    "render_snapshot": render.render_snapshot,
+    "render_status": render.render_status,
 }
 
 

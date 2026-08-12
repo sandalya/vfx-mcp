@@ -403,6 +403,32 @@ def viewport_dolly(ctx: Context, factor: float) -> str:
     return _call("viewport_dolly", {"factor": factor})
 
 
+# -------------------------------------------------------------------
+# Stage 3: non-blocking render. render_snapshot spawns a background
+# Karma render and returns immediately; render_status polls it.
+# -------------------------------------------------------------------
+
+@mcp.tool()
+def render_snapshot(ctx: Context, renderer: str = "karma", quality: str = "draft", camera: str = "viewport") -> str:
+    """Render a still frame in the background and return immediately --
+    call render_status() to poll it. renderer: only 'karma'. quality:
+    'draft' (512x512) or 'preview' (960x540). camera: 'viewport'
+    (default, GUI only, copies the SceneViewer's current camera -- call
+    a viewport_* command first to frame it) or 'fit' (headless-safe,
+    frames every displayed /obj node automatically). Requires a sandbox
+    scene and a pre-existing c:/houdini_mcp_sandbox/_renders/ directory."""
+    return _call("render_snapshot", {"renderer": renderer, "quality": quality, "camera": camera})
+
+
+@mcp.tool()
+def render_status(ctx: Context) -> str:
+    """Poll the single pending render_snapshot slot. No arguments.
+    Returns done/path/seconds_elapsed/errors/warnings, or pending: false
+    if nothing is pending. Never raises -- call this in a loop after
+    render_snapshot until done is true, then Read the path."""
+    return _call("render_status", {})
+
+
 def main():
     mcp.run()
 
@@ -424,6 +450,8 @@ if __name__ == "__main__":
         # Stage 2 write tools
         "get_viewport_info", "viewport_frame_node", "viewport_frame_all",
         "viewport_set_view", "viewport_orbit", "viewport_dolly",
+        # Stage 3: non-blocking render
+        "render_snapshot", "render_status",
     }
     if _bridge_tool_names != commands_spec.COMMAND_NAMES:
         missing_in_bridge = commands_spec.COMMAND_NAMES - _bridge_tool_names
