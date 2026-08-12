@@ -8,6 +8,15 @@ and source excerpts from `houdini_mcp/tools/`) — the items marked
 **unverified** below were not confirmed against actual cloned source and
 should be checked before acting on them.
 
+**Disposition.** `houdini/docs/HMCP_FEEDBACK_LOOP_PLAN.md` is the
+authoritative execution order — its D6 triaged this review's
+recommendations: `find_nodes`, the undo-revision guard, `hint` in the error
+shape, and the `connect_nodes` category pre-check landed (Stages 1 and 5,
+2026-08-12, see that document's §5b for how "revert" was reinterpreted as
+hardening `delete_node`, not a new command); `network_snapshot`,
+`reorder_inputs`, and named token-budget constants were declined. Read that
+document for the reasoning.
+
 ## 1. Architecture / transport
 
 | | Ours (`hmcp`) | Theirs |

@@ -5,6 +5,13 @@ Audience: an implementing agent with no memory of this planning conversation. Re
 
 Produced by an Opus planning agent, 2026-08-12. Not yet reviewed/approved by the owner (Sashok) — treat as a draft to discuss before Phase 0 starts.
 
+**Executed.** `houdini/docs/HMCP_FEEDBACK_LOOP_PLAN.md` is the authoritative
+execution order — it resolved this doc's contradictions with
+`HMCP_HEADLESS_RENDER_PLAN.md` (its §2 "Decisions already made"), then
+implemented and live-verified all six commands in its Stage 2 (2026-08-12).
+Read that document first; this one remains for the API-surface research
+(§2) and the design rationale it was written to capture.
+
 ---
 
 ## 1. Why this exists
@@ -434,7 +441,7 @@ Then:
 
 - **Pan.** After `viewport_frame_node` the subject is already centred, so pan buys composition only. It needs a screen-space→world basis derived from the rotation matrix and a scale tied to `resolutionInPixels()` / `orthoWidth()` — more API surface and more unverified behaviour than the payoff justifies — and it makes it easy to push the subject off-screen and burn a round trip re-framing. Revisit only if a real use case appears after Tier 1/2 are live.
 - **Roll, and any absolute camera transform** (`lookAt(x,y,z)`, `set_camera_transform(...)`, exposing `setViewTransform`). This is the generic escape hatch §3.3 rejects. `viewport_frame_node` + `viewport_orbit` + `viewport_set_view` cover the actual need without it.
-- **`saveViewToCamera`, `setCamera`, `lockCameraToView`, `exportViewToCameraContinuously`.** All four exist on `hou.GeometryViewport` and all four convert viewport state into node-graph writes on camera nodes the agent did not create. Add them to the "never write this capability" list alongside `execute_code` and broad `modify_node`.
+- **`saveViewToCamera`, `setCamera`, `lockCameraToView`, `exportViewToCameraContinuously`.** All four exist on `hou.GeometryViewport` and all four convert viewport state into node-graph writes on camera nodes the agent did not create. **The ban is on exposing any of these as an agent-callable command** — never add them to `commands_spec.py`; add the four to the "never write this capability" list alongside `execute_code` and broad `modify_node` for the command surface itself. This does not ban internal plugin use on a node the plugin itself created and registered: `HMCP_FEEDBACK_LOOP_PLAN.md` D2 resolves the apparent contradiction with `HMCP_HEADLESS_RENDER_PLAN.md` §1.3 exactly this way — `render_snapshot` calls `saveViewToCamera` internally on its own `/obj/hmcp_cam`, shipped in that plan's Stage 3.
 - **Selection manipulation** (`node.setSelected`, `frameSelected`, `homeSelected`) — §3.2.
 - **Viewport display options** (`viewport.settings()`: shading mode, wireframe, background, HDR) and **viewport layout changes** (`setViewportLayout`). Plausible future additions on the same pattern; each would need its own narrow command and its own justification. Not needed to see the work.
 - **`hou.geometryViewportType.UV`** — §3.4.

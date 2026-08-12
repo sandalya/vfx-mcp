@@ -170,11 +170,11 @@ Fill this in as you go; it is how the next session knows where you stopped.
 | Stage | What | Status |
 |---|---|---|
 | 0 | Fact-finding probe, no code | **done** 2026-08-12 — all of 0a–0e answered; net new finding: unsaved-changes precondition + auto-save fix + `executebackground` not near-instant (D3 addendum); Mantra recommended excluded from Stage 3's initial renderer set |
-| 1 | Diagnosis + shared plumbing | **done** 2026-08-12 — live-verified on local 20.5.278; pc137 deploy/verify still pending |
+| 1 | Diagnosis + shared plumbing | **done** 2026-08-12 — live-verified on local 20.5.278. pc137: the full current package (through Stage 5, 33 commands) deployed 2026-08-12 via `deploy_plugin.sh hmcp`, `hython -m py_compile` clean on all 6 files — but **not yet live-verified there**, needs Sashok's RDP session (`import hmcp; hmcp.start_server()`, then `check_contract.py`) |
 | 2 | Camera control | **done** 2026-08-12 — all 6 commands live-verified and shipped (24 → 30). `viewport_orbit` briefly shipped without, then root-caused (HOM's rotation()/translation() docs are wrong -- confirmed via SideFX staff) and fixed same day |
 | 3 | Non-blocking `render_snapshot` | **done** 2026-08-12 — live-verified end to end (30 → 32 commands); found and fixed two real bugs during verification (dead frame-pin, `camera="fit"` FOV+own-camera-in-bbox) — see Stage 3's own implementation-status note below |
 | 4 | Image delivery from pc137 | **done** 2026-08-12 — decided with the owner: no gap yet (all verification through Stage 3 stayed local), so limitation documented in `README.md` instead of building `fetch_render.sh`; revisit if/when remote mode is actually used |
-| 5 | `find_nodes` + undo-revision guard | code written 2026-08-12 (32 → 33 commands), local py_compile/registry/contract checks clean — **not yet live-verified**, needs Sashok's Houdini session |
+| 5 | `find_nodes` + undo-revision guard | **done** 2026-08-12 — live-verified end to end (32 → 33 commands); watermark refusal confirmed with a real manual edit between two agent calls, plus the re-arm behavior; `check_contract.py` real finding — see Stage 5's own status note below |
 
 ---
 

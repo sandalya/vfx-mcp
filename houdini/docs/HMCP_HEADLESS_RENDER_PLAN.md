@@ -6,6 +6,13 @@ Supersedes two lines of `houdini/docs/HOUDINI_MCP_REWRITE_PLAN.md` — see §1. 
 
 Produced by an Opus planning agent, 2026-08-12. Not yet reviewed/approved by the owner (Sashok) — treat as a draft to discuss before Phase 0 starts.
 
+**Executed, Track A only.** `houdini/docs/HMCP_FEEDBACK_LOOP_PLAN.md` is the
+authoritative execution order — its Stage 3 implemented and live-verified
+`render_snapshot`/`render_status` (2026-08-12), superseding this document's
+own Phase 0-3 plan for Track A. **Track B (the headless `hython` worker,
+§3-§5 here) remains deferred, unchanged** — see that document's §7. Read
+`HMCP_FEEDBACK_LOOP_PLAN.md` first.
+
 ---
 
 ## 1. What this changes in the original plan, and what it does not
@@ -93,7 +100,7 @@ Worse, the dispatcher is synchronous inside the pump: `_process_server` → `exe
 - **The `/out` `karma` ROP is an HDA wrapper around Scene Import** (SideFX docs). It converts `/obj` geometry to USD internally and renders it through Karma — meaning it works for this project's `/obj`+SOP target domain *without* the agent touching `/stage`, which keeps `HOUDINI_MCP_REWRITE_PLAN.md:35` ("not `/stage`, not Solaris") intact at the user-facing level. Consequence: its parameter names are HDA parameters, **not** guessable, and the old plugin's guesses (`picture`, `resolution1`/`resolution2`, `engine` — `HoudiniMCPRender.py:572-596`) must be re-derived live via the already-existing `get_node_type_parms("karma", "Driver")`. Do not port those names on faith.
 - **The `opengl` ROP cannot render headless** — it needs a GL canvas; out-of-process/no-GUI invocation fails. Confirms the brief's premise: headless "eyes" must be Karma or Mantra, there is no cheap OpenGL shortcut.
 - **`rop.render()` from `hython` is the standard batch mechanism** and is widely used for Mantra and Karma. I am confident for Mantra (`ifd` → `mantra.exe`), and *reasonably* confident for the Karma ROP — but the Karma ROP's internal Scene-Import→USD→Karma path is exactly the sort of thing that can behave differently without a UI (one forum thread notes it invokes hython internally to generate USD for husk, and that consumes a license on farm nodes). **This is the single biggest unverified assumption in Track B and Phase 3 exists to settle it before any headless code is written.**
-- **`hou.GeometryViewport.saveViewToCamera(camera_node[, camera_name])` exists** (HOM docs) and copies the viewport's current view transform into a camera node. The one-argument signature is deprecated in favour of the two-argument one — verify which works on 21.0.729 before relying on it. This is the key to Track A's camera problem (§4.2).
+- **`hou.GeometryViewport.saveViewToCamera(camera_node[, camera_name])` exists** (HOM docs) and copies the viewport's current view transform into a camera node. **Resolved, opposite of this note's assumption:** `HMCP_FEEDBACK_LOOP_PLAN.md` Stage 0c confirmed live on local 20.5.278 that the **1-argument** form works and the 2-argument form raises `TypeError` — there is no 2-arg overload on this build at all, contradicting the "deprecated in favour of the two-argument one" claim below. Not yet cross-checked on pc137 (needs a live viewport, unlike the pure-API D7 table). This is the key to Track A's camera problem (§4.2), and is exactly what `render_snapshot`'s `camera="viewport"` mode calls, per D2.
 - **Lights**: Mantra falls back to a default headlight with no lights in the scene; Karma via Scene Import most likely does **not** and will produce a black or near-black frame. Unverified — Phase 0 measures it, and §4.4 designs for it.
 
 ---

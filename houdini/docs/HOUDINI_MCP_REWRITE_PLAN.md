@@ -377,6 +377,11 @@ Window asset (frame + glass), then promoted parameters, then HDA creation
 (which reintroduces a file write and needs its own decision), then DOPs and
 Copernicus.
 
+What actually happened after Phase 3: `houdini/docs/HMCP_FEEDBACK_LOOP_PLAN.md`
+(camera control, non-blocking render, `find_nodes`, the undo-revision guard —
+Stages 0-5, done 2026-08-12). That document is the authoritative execution
+order for everything built on top of this one.
+
 ---
 
 ## Out of scope
