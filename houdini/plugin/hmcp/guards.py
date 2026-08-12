@@ -272,7 +272,6 @@ RENDERERS = {
         "camera_parm": "camera",
         "resolution_parm": "resolution",  # Int x2 tuple
         "samples_parm": "samplesperpixel",
-        "frame_parm": "f",  # Float x3 tuple: f1/f2/f3 (start/end/inc)
         "trange_parm": "trange",
         "trange_off_value": 0,
         "force_headlight_parm": "force_headlight",

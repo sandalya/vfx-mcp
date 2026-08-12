@@ -124,19 +124,33 @@ def _build_viewport_camera():
     return cam
 
 
+_NON_GEOMETRY_OBJECT_TYPES = {"cam", "light"}
+
+
 def _find_displayed_geometry():
     """Every /obj-level Object node with its display flag set -- what
     camera='fit' frames. Simpler than the old plugin's subnet-walking
     version (HoudiniMCPRender.py:148): this plugin's domain is
     guards.ALLOWED_NODE_CATEGORIES (Sop/Object), so a plain top-level
     scan covers everything it could itself have created or that a normal
-    scene displays."""
+    scene displays.
+
+    Excludes camera/light object types: live-tested 2026-08-12, Houdini
+    leaves the display flag set on a freshly-created camera object (this
+    plugin never sets it), so an un-filtered scan makes camera='fit'
+    frame its own /obj/hmcp_cam -- a tiny point-like bbox at the camera's
+    own position that skews the union bbox toward wherever the camera
+    last happened to be. Excluding by type, not by the plugin's own
+    camera path, also guards against a stray user camera/light with its
+    display flag left on."""
     import hou
 
     obj = hou.node("/obj")
     return [
         n for n in obj.children()
-        if n.type().category().name() == "Object" and n.isDisplayFlagSet()
+        if n.type().category().name() == "Object"
+        and n.isDisplayFlagSet()
+        and n.type().name() not in _NON_GEOMETRY_OBJECT_TYPES
     ]
 
 
@@ -164,7 +178,7 @@ def _collective_world_bbox(nodes):
     return result
 
 
-def _build_fit_camera():
+def _build_fit_camera(width, height):
     """camera='fit': point /obj/hmcp_cam at the scene's displayed
     geometry from a fixed default angle, at a distance computed from the
     bounding SPHERE of the collective world bbox (not its axis-aligned
@@ -173,7 +187,21 @@ def _build_fit_camera():
     viewing angle, which is a simpler and strictly more general
     replacement for the old plugin's per-axis-rotation special case
     (HoudiniMCPRender.py:341-421: 'has_significant_rotation' branching).
-    Works headless -- never touches hou.ui."""
+    Works headless -- never touches hou.ui.
+
+    Rotation/eye math confirmed correct by an independent live-number
+    reconstruction (2026-08-12): Houdini is row-vector (v' = v*M),
+    hou.hmath.buildRotate's default order 'xyz' matches an Object node's
+    default rOrd 'xyz', so buildRotate(rx, ry, 0) reproduces exactly the
+    rotation Houdini applies for r=(rx, ry, 0). The actual bug found live
+    was the FOV: 'aspect' is Houdini's PIXEL aspect ratio, not the image
+    aspect ratio, and a freshly-created cam node defaults to 1280x720 --
+    left un-pinned, its real vertical FOV (driven by resy/resx) doesn't
+    match the 512x512/960x540 the ROP actually renders, placing the
+    camera far too close and cropping the frame. Pinning the camera's own
+    res/win/winsize to the render resolution before computing vertical_fov
+    from resy*aperture/(resx*aspect) fixes this -- see
+    https://www.sidefx.com/docs/houdini/ref/cameralenses.html."""
     import hou
 
     nodes = _find_displayed_geometry()
@@ -194,26 +222,40 @@ def _build_fit_camera():
 
     cam = _get_or_create_render_camera()
     rx, ry = -20.0, 35.0  # fixed default 3/4 angle -- see docstring above
-    aperture = cam.parm("aperture").eval()
-    aspect = cam.parm("aspect").eval()
-    focal = cam.parm("focal").eval()
-    horizontal_fov = 2 * math.atan((aperture / 2.0) / focal)
-    vertical_fov = 2 * math.atan(math.tan(horizontal_fov / 2.0) / aspect)
-    min_fov = min(horizontal_fov, vertical_fov)
-
-    padding_factor = 1.1
-    distance = max(5.0, (radius * padding_factor) / math.sin(min_fov / 2.0))
-
-    rot = hou.hmath.buildRotate(rx, ry, 0).extractRotationMatrix3()
-    forward_world = hou.Vector3(0, 0, -1) * rot
-    eye = hou.Vector3(center) - forward_world * distance
 
     with hou.undos.group("MCP: render_snapshot fit camera"):
+        # win/winsize reset because camera='viewport' shares this same
+        # node and saveViewToCamera() can leave its own screen window on
+        # it (plan D2/3d) -- 'fit' must not inherit that.
+        cam.parmTuple("res").set([width, height])
+        cam.parmTuple("win").set([0.0, 0.0])
+        cam.parmTuple("winsize").set([1.0, 1.0])
+
+        aperture = cam.parm("aperture").eval()
+        aspect = cam.parm("aspect").eval()  # pixel aspect, not image aspect
+        focal = cam.parm("focal").eval()
+        horizontal_fov = 2 * math.atan((aperture / 2.0) / focal)
+        vertical_aperture = (height * aperture) / (width * aspect)
+        vertical_fov = 2 * math.atan((vertical_aperture / 2.0) / focal)
+        min_fov = min(horizontal_fov, vertical_fov)
+
+        padding_factor = 1.1
+        distance = max(5.0, (radius * padding_factor) / math.sin(min_fov / 2.0))
+
+        rot = hou.hmath.buildRotate(rx, ry, 0).extractRotationMatrix3()
+        forward_world = hou.Vector3(0, 0, -1) * rot
+        eye = hou.Vector3(center) - forward_world * distance
+
         cam.parm("projection").set(0)  # perspective
         cam.parmTuple("r").set([rx, ry, 0])
         cam.parmTuple("t").set(list(eye))
 
-    return cam
+    framed = {
+        "nodes": [n.path() for n in nodes],
+        "bbox_min": list(world_bbox.minvec()),
+        "bbox_max": list(world_bbox.maxvec()),
+    }
+    return cam, framed
 
 
 # ---------------------------------------------------------------------------
@@ -284,6 +326,9 @@ def render_snapshot(renderer="karma", quality="draft", camera="viewport"):
             f"render_snapshot."
         )
 
+    quality_settings = guards.RENDER_QUALITY[quality]
+    framed = None
+
     if camera == "viewport":
         if not hasattr(hou, "ui"):
             raise ValueError(
@@ -292,14 +337,14 @@ def render_snapshot(renderer="karma", quality="draft", camera="viewport"):
             )
         cam_node = _build_viewport_camera()
     else:
-        cam_node = _build_fit_camera()
+        cam_node, framed = _build_fit_camera(
+            quality_settings["width"], quality_settings["height"]
+        )
 
     rop, rop_path = _get_or_create_rop(renderer)
 
-    quality_settings = guards.RENDER_QUALITY[quality]
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     filepath = f"{guards.RENDER_DIR}mcp_{ts}_{renderer}.png"
-    cur_frame = hou.frame()
 
     with hou.undos.group("MCP: render_snapshot"):
         rop.parm(descriptor["camera_parm"]).set(cam_node.path())
@@ -309,9 +354,19 @@ def render_snapshot(renderer="karma", quality="draft", camera="viewport"):
         samples_parm = rop.parm(descriptor["samples_parm"])
         if samples_parm is not None:
             samples_parm.set(quality_settings["samples"])
+        # This is the actual multi-frame guard: forcing trange to "off"
+        # unconditionally, right before every executebackground press,
+        # inside this same undo group. Karma's "f" tuple (f1/f2/f3) is
+        # NOT a usable second guard here -- live-tested 2026-08-12: this
+        # HDA keeps f1/f2 synced to $FSTART/$FEND and silently reverts
+        # any direct .set() on them regardless of trange's state, so a
+        # would-be belt-and-braces frame pin is a structural no-op on
+        # this ROP type. trange="off" alone is sufficient and verified:
+        # tampering trange to "normal" externally with f1/f2 still at
+        # $FSTART/$FEND (1/240), then calling render_snapshot, produced
+        # a normal ~14s single-frame render -- this reset fired and
+        # trange read back "off" immediately after.
         rop.parm(descriptor["trange_parm"]).set(descriptor["trange_off_value"])
-        f_tuple = rop.parmTuple(descriptor["frame_parm"])
-        f_tuple.set((cur_frame, cur_frame, f_tuple.eval()[2]))
         guards.set_render_output(rop, descriptor["picture_parm"], filepath)
 
     # D3 addendum (Stage 0e): executebackground pops a blocking, abort-on-
@@ -324,7 +379,7 @@ def render_snapshot(renderer="karma", quality="draft", camera="viewport"):
 
     _pending = {"path": filepath, "started_at": datetime.now(), "rop_path": rop_path}
 
-    return {
+    result = {
         "path": filepath,
         "renderer": renderer,
         "resolution": [quality_settings["width"], quality_settings["height"]],
@@ -332,6 +387,9 @@ def render_snapshot(renderer="karma", quality="draft", camera="viewport"):
         "rop_path": rop_path,
         "started": True,
     }
+    if framed is not None:
+        result["framed"] = framed
+    return result
 
 
 def render_status():

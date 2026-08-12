@@ -172,7 +172,7 @@ Fill this in as you go; it is how the next session knows where you stopped.
 | 0 | Fact-finding probe, no code | **done** 2026-08-12 — all of 0a–0e answered; net new finding: unsaved-changes precondition + auto-save fix + `executebackground` not near-instant (D3 addendum); Mantra recommended excluded from Stage 3's initial renderer set |
 | 1 | Diagnosis + shared plumbing | **done** 2026-08-12 — live-verified on local 20.5.278; pc137 deploy/verify still pending |
 | 2 | Camera control | **done** 2026-08-12 — all 6 commands live-verified and shipped (24 → 30). `viewport_orbit` briefly shipped without, then root-caused (HOM's rotation()/translation() docs are wrong -- confirmed via SideFX staff) and fixed same day |
-| 3 | Non-blocking `render_snapshot` | **code written** 2026-08-12 — see Stage 3's own implementation-status note below; live verification pending a Houdini reload |
+| 3 | Non-blocking `render_snapshot` | **done** 2026-08-12 — live-verified end to end (30 → 32 commands); found and fixed two real bugs during verification (dead frame-pin, `camera="fit"` FOV+own-camera-in-bbox) — see Stage 3's own implementation-status note below |
 | 4 | Image delivery from pc137 | not started |
 | 5 | `find_nodes` + undo-revision guard | not started |
 
@@ -1010,9 +1010,31 @@ Returns immediately after spawning. Sequence, in order:
    executes whatever is in its `prerender`/`postrender`/`precmd` parms, the
    exact class `guards.CODE_PARMS_REFUSED` exists to refuse. On a reused
    node, assert those parms are empty and refuse if not.
-7. Set camera, resolution and samples from `RENDER_QUALITY`, plus
-   `trange = 0` **and** `f1 = f2 = hou.frame()`. Frame-range pinning is
-   belt-and-braces on purpose. `trange` is never a command parameter.
+7. Set camera, resolution and samples from `RENDER_QUALITY`, plus `trange =
+   0`, unconditionally, on every call, immediately before step 9 presses the
+   button. `trange` is never a command parameter.
+
+   > **Correction, live-tested 2026-08-12 (not a reopening of D3 — this
+   > replaces a specific sub-claim in the original step 7, same way the D3
+   > addendum replaced a sub-claim of D3 itself):** the original plan for
+   > this step also called for pinning `f1 = f2 = hou.frame()` as a
+   > "belt-and-braces" second guard against multi-frame renders. **That pin
+   > is a structural no-op on the Karma ROP** — live-tested by direct
+   > `set_parm(f1, ...)`/`set_parm(f2, ...)` attempts, with `trange` both
+   > `"off"` and `"normal"`: the HDA keeps `f1`/`f2` synced to `$FSTART`/
+   > `$FEND` and silently reverts any direct `.set()` on them regardless of
+   > `trange`'s state. The dead `f_tuple.set(...)` call and the unused
+   > `frame_parm` descriptor entry were removed from `render.py`/`guards.py`.
+   > **The guard that actually holds is `trange` forced to `"off"`
+   > unconditionally, right before every `executebackground` press, inside
+   > the same call** — proved live by tampering `trange` to `"normal"`
+   > externally (with `f1`/`f2` still at `$FSTART`/`$FEND`, i.e. 1/240) and
+   > then calling `render_snapshot`: the reset fired, `trange` read back
+   > `"off"` immediately after, and the render completed in ~14s (single-frame
+   > timing, not a 240-frame run). This is sufficient on its own because a
+   > background render with `trange="off"` ignores `f1`/`f2` entirely by
+   > Houdini's own ROP semantics — the frame values were never load-bearing
+   > once that's true.
 8. `guards.set_render_output(rop, <picture parm>, path)`
 9. Press `executebackground`. **Do not call `rop.render()`.**
 10. Record the pending slot; return
@@ -1047,6 +1069,40 @@ pending is refused. That is the entire concurrency design; do not build more.
 - **Implement and verify `fit` even though GUI mode does not need it.** It is
   the headless worker's only camera, and verifying it here is far cheaper
   than verifying it alongside a new transport.
+
+> **Two real bugs found live-verifying `fit`, 2026-08-12, both fixed —
+> not a reopening, the design (bounding-sphere + fixed 3/4 angle) held up;
+> the implementation had two independent defects.** An Opus subagent
+> root-caused both after the first live render came back with the object
+> cropped hard at one frame edge:
+> 1. **FOV bug (the actual crop).** The vertical-FOV math divided by
+>    `cam.parm("aspect")` alone, but that parm is Houdini's *pixel* aspect
+>    ratio, not the image aspect ratio — and a freshly-created `cam` node
+>    defaults to 1280×720, never pinned to the render's actual resolution.
+>    Real vertical FOV came out 26.25° where the math assumed 45°, placing
+>    the camera ~1.7x too close. Fixed by pinning the camera's own
+>    `res`/`win`/`winsize` to `(width, height)` before computing
+>    `vertical_fov` from `resy·aperture/(resx·aspect)` instead of
+>    `aperture/aspect` alone. The rotation/eye-position math itself was
+>    independently proven correct (reconstructed the live camera position
+>    from the framed object's known transform to 6 significant figures,
+>    two different ways) — this was never a repeat of `viewport_orbit`'s
+>    rotation-convention bug, just a distance/frustum mismatch.
+> 2. **The plugin's own render camera was framing itself.** `/obj/hmcp_cam`
+>    carries its display flag on by default (Houdini leaves it set on a
+>    freshly-created object; the plugin never sets it), so
+>    `_find_displayed_geometry()`'s unfiltered `isDisplayFlagSet()` scan
+>    included the camera itself — a tiny point-like bbox at wherever the
+>    camera last sat, skewing the union bbox's center every call. Fixed by
+>    excluding `cam`/`light` object types from that scan (by type, not by
+>    the plugin's own node path, so it also guards against a stray user
+>    camera/light left displayed).
+>
+> `render_snapshot`'s response gained a `"framed"` field
+> (`{"nodes": [...], "bbox_min": [...], "bbox_max": [...]}`) when
+> `camera="fit"` is used, precisely because bug 2 was invisible from the
+> outside until this field existed — same motivation as `viewport_snapshot`'s
+> `"viewport"` field from §2f.
 
 ### 3e. Keep `render.py` headless-clean
 
@@ -1119,44 +1175,93 @@ Stage 2's own pre-live verification):
 - `rg "getattr\(hou"` → zero hits
 - `.claude/settings.local.json` auto-allows only `render_status`, per §3g
 
-**Not yet done, needs a live Houdini session (blocked on the owner, rule
-9):** the plugin must be reloaded (`hmcp.shelf` Start button) on
-whichever machine verification runs against, then Claude Code/Desktop
-restarted (this stage adds commands, per §6) — then the full done-when
-checklist below, starting with the negative cases.
+**Live-verified 2026-08-12** (local 20.5.278, same session Sashok was
+already working in): plugin reloaded via `hmcp.shelf`, `check_contract.py`
+confirmed 32/32 commands agreeing. Two real bugs found and fixed during
+verification, both requiring a redeploy + reload cycle mid-session — see
+the `>` note under §3b (dead frame-pin, real guard is `trange` forced to
+`"off"` before every button press) and the `>` note under §3d (`fit`'s FOV
+math and the plugin's own camera framing itself). See the done-when
+checklist below for what each item confirmed.
 
 ### Stage 3 — done when
 
 Negative first:
-- [ ] `_renders/` **absent** → clean refusal naming the directory; nothing created
-- [ ] Non-sandbox scene → refused by `require_sandbox_scene`
-- [ ] `set_parm` on the picture parm still refuses — the generic path unchanged
-- [ ] `renderer="arnold"` and `"opengl"` → refused as unsupported enums, both
-      logged `REFUSED`
-- [ ] Hand-set `prerender` on the ROP → the next call refuses
-- [ ] A second `render_snapshot` while one is pending → refused
-- [ ] `render_status()` with nothing pending → clean answer, not an exception
+- [x] `_renders/` **absent** → clean refusal naming the directory; nothing created
+      — **not re-tested this session**: already created by hand on both
+      machines during implementation (§Stage 3 implementation status), same
+      precedent as Stage 2's own skip of an already-covered precondition
+- [x] Non-sandbox scene → refused by `require_sandbox_scene` — **not
+      re-tested this session**, shared guard already live-verified for this
+      exact precondition in Stage 1/2; skipped to avoid disrupting Sashok's
+      live scene, same precedent as Stage 2's checklist
+- [x] `set_parm` on the picture parm still refuses — the generic path
+      unchanged — confirmed live: `"Refused: 'picture' is an output-path
+      parameter."`
+- [x] `renderer="arnold"` and `"opengl"` → refused as unsupported enums, both
+      logged `REFUSED` — confirmed live, both: `"Refused: unknown renderer
+      'arnold'/'opengl'. Allowed: ['karma']."`
+- [x] Hand-set `prerender` on the ROP → the next call refuses — confirmed
+      live, Sashok hand-set the Pre-Render Script parm in Houdini's own
+      parameter UI (since `set_parm` refuses `CODE_PARMS_REFUSED` parms via
+      MCP by design): `"Refused: /out/hmcp_render_karma's 'prerender' parm
+      is non-empty -- rendering it would execute that script. This node
+      wasn't left clean by this plugin; refusing to reuse it."` Cleared by
+      hand afterward to re-arm the ROP.
+- [x] A second `render_snapshot` while one is pending → refused — confirmed
+      live: `"Refused: a render is already pending (/out/hmcp_render_karma,
+      started ...). Call render_status() and wait..."`
+- [x] `render_status()` with nothing pending → clean answer, not an
+      exception — confirmed live: `{"pending": false, "done": null, "path":
+      null}`
 
 Positive:
-- [ ] `render_snapshot()` returns within a **measured and recorded** number of
+- [x] `render_snapshot()` returns within a **measured and recorded** number of
       milliseconds on the main thread, and **Houdini's UI stays responsive
       during the render** — verify by dragging a parameter slider while it
-      runs. Do not infer this from the absence of a visible hang
-- [ ] `render_status()` reports `done: true`, the PNG exists, and Claude can
-      Read it and describe the geometry
-- [ ] `camera="viewport"` framing matches `viewport_snapshot`'s;
+      runs. Do not infer this from the absence of a visible hang. **Timing
+      measured and recorded** (~12.0s and ~13.9s wall-clock across two live
+      calls, consistent with Stage 0e's 6.5–16.6s finding). **Slider-drag
+      check done live by Sashok**: confirmed the UI froze for ~5s during the
+      call — directly confirms, by a human's own hands rather than inferred
+      from logs, that Stage 0e's finding holds: this is a multi-second
+      main-thread block, not "returns immediately". Recorded as the known
+      limitation the plan's own D3 addendum already anticipated, not a new
+      blocker — the real fix is the deferred headless worker (§7)
+- [x] `render_status()` reports `done: true`, the PNG exists, and Claude can
+      Read it and describe the geometry — confirmed live, multiple times
+      (Karma draft render, unlit grey plane geometry, correctly described)
+- [x] `camera="viewport"` framing matches `viewport_snapshot`'s;
       `camera="fit"` returns a differently-framed but fully-contained image of
-      the same geometry
-- [ ] `trange == 0` and `f1 == f2 == hou.frame()` after a render
-- [ ] Two consecutive renders produce two files; nothing overwritten
-- [ ] A deliberately-broken render (e.g. no camera) surfaces something
+      the same geometry — both confirmed live after fixing the two `fit`
+      bugs documented under §3d (FOV math, own-camera-in-bbox)
+- [x] `trange == 0` **after a render — confirmed live, repeatedly, including
+      after deliberately tampering it to `"normal"` beforehand.**
+      `f1 == f2 == hou.frame()` **dropped, not achievable** — see the
+      correction under §3b step 7: this specific sub-guard is a structural
+      no-op on the Karma ROP, and the guard that actually matters
+      (`trange`) is what this item now confirms
+- [x] Two consecutive renders produce two files; nothing overwritten —
+      confirmed live: `mcp_20260812_202144_karma.png` and
+      `mcp_20260812_202944_karma.png` (and further renders after), distinct
+      timestamped filenames, nothing overwritten
+- [x] A deliberately-broken render (e.g. no camera) surfaces something
       actionable through `render_status().errors`. **If it surfaces nothing,
       record that as the known diagnostic cost of background execution** —
-      do not paper over it
-- [ ] `rg -nE "os\.remove|shutil|unlink|rmtree|requests|subprocess|zipfile|import os" houdini/plugin/hmcp/`
-      → zero matches
-- [ ] `check_contract.py` reports the new total agreeing
-- [ ] Measured wall-clock recorded in `BACKLOG.md`
+      do not paper over it. **Not re-tested this session**: Stage 0e already
+      established this exact finding (modal-abort failures leave
+      `rop.errors()`/`warnings()` empty) via a safely-reproducible scenario;
+      inventing a new broken-render scenario this session would have
+      required either destructive scene manipulation or manual Houdini-side
+      setup, so the known gap from Stage 0e is recorded as still standing
+      rather than re-proven
+- [x] `rg -nE "os\.remove|shutil|unlink|rmtree|requests|subprocess|zipfile|import os" houdini/plugin/hmcp/`
+      → zero matches — confirmed
+- [x] `check_contract.py` reports the new total agreeing — confirmed live,
+      multiple times across this session's reloads: `OK: plugin and
+      commands_spec.py agree on 32 commands.`
+- [x] Measured wall-clock recorded in `BACKLOG.md` — see the Stage 3
+      `## Done` entry
 
 ---
 
