@@ -170,7 +170,7 @@ Fill this in as you go; it is how the next session knows where you stopped.
 | Stage | What | Status |
 |---|---|---|
 | 0 | Fact-finding probe, no code | **done** 2026-08-12 — all of 0a–0e answered; net new finding: unsaved-changes precondition + auto-save fix + `executebackground` not near-instant (D3 addendum); Mantra recommended excluded from Stage 3's initial renderer set |
-| 1 | Diagnosis + shared plumbing | not started |
+| 1 | Diagnosis + shared plumbing | **done** 2026-08-12 — live-verified on local 20.5.278; pc137 deploy/verify still pending |
 | 2 | Camera control | not started |
 | 3 | Non-blocking `render_snapshot` | not started |
 | 4 | Image delivery from pc137 | not started |
@@ -656,14 +656,48 @@ following snapshot will refuse.
 
 ### Stage 1 — done when
 
-- [ ] `hython -m py_compile` clean on every file, both machines
-- [ ] `check_contract.py` still reports **24** commands agreeing
-- [ ] A deliberately-triggered handler exception writes a full traceback into
-      `hmcp_audit.log`
-- [ ] A SOP → DOP `connect_nodes` returns a named refusal
-- [ ] With Scene View closed, `viewport_snapshot` returns
-      `"Precondition: …"` and a `REFUSED` audit line — **not** a traceback
-- [ ] One line in `BACKLOG.md` under `## Done`
+- [x] `hython -m py_compile` clean on every file — **local 20.5.278 only**;
+      pc137 not yet re-deployed/compiled against this stage's changes
+- [x] `check_contract.py` still reports **24** commands agreeing (confirmed
+      live, local, after a clean plugin+Houdini restart — see the reload
+      incident note below)
+- [x] A deliberately-triggered handler exception writes a full traceback into
+      `hmcp_audit.log` — triggered live via `create_node` with a bogus node
+      type (`hou.OperationFailed`, not `ValueError`/`PermissionError`, so it
+      hits the generic handler); full traceback confirmed present in the log
+- [x] A SOP → DOP `connect_nodes` returns a named refusal — tested as
+      Sop → Object instead (Dop isn't in `ALLOWED_NODE_CATEGORIES`, so a Dop
+      node can't be created via `create_node` to set the test up); same
+      category-mismatch code path, confirmed refused with a named `ValueError`
+      and a `REFUSED` audit line
+- [x] With Scene View closed, `viewport_snapshot` returns
+      `"Precondition: …"` and a `REFUSED` audit line — **not** a traceback —
+      confirmed live, Sashok closed the pane by hand
+- [x] One line in `BACKLOG.md` under `## Done`
+
+**Reload incident, worth keeping for next time:** verifying this stage took
+much longer than the code changes themselves because of an infra problem,
+not a code bug. Reloading the plugin via the `sys.modules`-purge pattern
+(`hmcp.stop_server()` → pop `hmcp*` from `sys.modules` → `import hmcp` →
+`start_server()`) left an **orphaned listening socket** bound to port 9878 in
+the same Houdini process after a second reload — the old `HmcpServer`
+object's event-loop callback stayed registered and its socket stayed open,
+but the Python reference to it was gone (replaced by the new module's fresh
+`_server` global), so `stop_server()` on the *new* instance had nothing to
+call `.stop()` on to close it. `netstat` showed **two** `LISTENING` entries
+on `0.0.0.0:9878` under the same PID. New connections got nondeterministically
+routed to either socket; the dead one's `listen(5)` backlog filled with
+never-`accept()`'d connections, so the symptom evolved from intermittent
+timeouts to a hard, consistent `WinError 10061` (connection actively
+refused) — looked exactly like a firewall/AV block from the outside, and
+cost real time chasing that red herring before `netstat -ano` showed the
+duplicate listener. **No code fix exists for this** — a dead listener with
+no reachable Python reference can't be closed short of a debugger attach.
+**The only reliable fix is a full Houdini restart**, not just another
+plugin reload; confirmed by the PID changing in `netstat` and the port
+immediately accepting connections again. If a future reload session starts
+timing out or getting refused, check `netstat -ano | findstr :9878` for more
+than one `LISTENING` line before assuming it's the code.
 
 ---
 

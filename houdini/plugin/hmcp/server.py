@@ -63,6 +63,16 @@ def _audit(line):
         pass  # audit logging must never break a command
 
 
+def _add_hint(response, exc):
+    """Copy an optional `.hint` attribute a handler attached to its raised
+    exception into the response dict. Purely additive -- every existing
+    key stays; `hint` is absent entirely when a handler didn't set one,
+    rather than present as null, so old clients see no shape change."""
+    hint = getattr(exc, "hint", None)
+    if hint:
+        response["hint"] = hint
+
+
 def _note(line):
     """A server-lifecycle line: to the log always, to stdout best-effort.
 
@@ -229,13 +239,20 @@ class HmcpServer:
         try:
             return self._execute_command_internal(command)
         except Exception as e:
+            tb = traceback.format_exc()
+            # Previously only reached the response, never the log -- a
+            # failure was diagnosable only by asking Sashok to copy it out
+            # of Houdini's Python Shell. Now it's in hmcp_audit.log too.
+            _audit(f"ERROR {command.get('type')}: {e}\n{tb}")
             traceback.print_exc()
-            return {
+            response = {
                 "status": "error",
                 "message": str(e),
                 "exception_type": type(e).__name__,
-                "traceback": traceback.format_exc(),
+                "traceback": tb,
             }
+            _add_hint(response, e)
+            return response
 
     def _execute_command_internal(self, command):
         cmd_type = command.get("type")
@@ -255,6 +272,8 @@ class HmcpServer:
             # unhandled exceptions so the audit log can tell "the agent
             # tried something disallowed" apart from "something broke".
             _audit(f"REFUSED {cmd_type}: {e}")
-            return {"status": "error", "message": str(e), "exception_type": type(e).__name__}
+            response = {"status": "error", "message": str(e), "exception_type": type(e).__name__}
+            _add_hint(response, e)
+            return response
 
         return {"status": "success", "result": result}

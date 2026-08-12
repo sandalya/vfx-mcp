@@ -38,6 +38,42 @@ def _require_parm(node, parm_name):
     return parm
 
 
+def _require_scene_viewport():
+    """Return (scene_viewer, viewport) for the current SceneViewer pane.
+
+    Shared preflight for viewport_snapshot and every Stage 2 viewport_*
+    command. Raises ValueError, not RuntimeError -- server.py's guard-
+    refusal catch only handles (PermissionError, ValueError); a
+    RuntimeError falls through to the generic handler and comes back as a
+    full traceback with no REFUSED audit line. Handles hou.ui being
+    absent entirely (headless hython) as well as no pane / no current
+    viewport, so headless callers get a clean message instead of an
+    AttributeError.
+    """
+    import hou
+
+    if not hasattr(hou, "ui"):
+        raise ValueError(
+            "Precondition: no viewport is available -- this command "
+            "requires a graphical Houdini session, not headless hython."
+        )
+
+    sv = hou.ui.paneTabOfType(hou.paneTabType.SceneViewer)
+    if sv is None:
+        err = ValueError(
+            "Precondition: no SceneViewer pane is open in Houdini. Open "
+            "Scene View (Windows -> Scene View) first."
+        )
+        err.hint = "Open Windows -> Scene View in Houdini, then retry."
+        raise err
+
+    viewport = sv.curViewport()
+    if viewport is None:
+        raise ValueError("Precondition: the SceneViewer pane has no current viewport.")
+
+    return sv, viewport
+
+
 # ---------------------------------------------------------------------------
 # Node graph editing
 # ---------------------------------------------------------------------------
@@ -79,6 +115,21 @@ def connect_nodes(from_path, to_path, input_index=0):
 
     from_node = _require_node(from_path)
     to_node = _require_node(to_path)
+
+    from_cat = from_node.type().category().name()
+    to_cat = to_node.type().category().name()
+    if from_cat != to_cat:
+        err = ValueError(
+            f"Refused: cannot connect {from_node.path()} ({from_cat}) into "
+            f"{to_node.path()} ({to_cat}) -- their network categories don't "
+            f"match."
+        )
+        err.hint = (
+            f"Connect nodes within the same category ({from_cat} outputs "
+            f"only wire into {from_cat} inputs). Wiring across categories "
+            f"(e.g. Sop -> Dop) isn't valid in Houdini's network model."
+        )
+        raise err
 
     with hou.undos.group("MCP: connect_nodes"):
         to_node.setInput(input_index, from_node)
@@ -266,29 +317,29 @@ def viewport_snapshot():
     guards.require_sandbox_scene()
     import hou
 
-    sv = hou.ui.paneTabOfType(hou.paneTabType.SceneViewer)
-    if sv is None:
-        raise RuntimeError(
-            "No SceneViewer pane is open in Houdini. Open Scene View "
-            "(Windows -> Scene View) first."
-        )
+    sv, viewport = _require_scene_viewport()
+
     # hou.updateMode() is deprecated and, as of 21.0.729, not even callable
     # (hou.updateMode is purely the enum class -- calling it raises
     # AttributeError: No constructor defined, hit live during Phase 2
     # verification). hou.updateModeSetting() is the current query API.
+    # Deliberately kept local to this handler, not folded into
+    # _require_scene_viewport -- it exists because *flipbook* pops a modal
+    # dialog; a camera move does not render and cannot trip it, so the
+    # Stage 2 viewport_* commands must not inherit this check.
     if hou.updateModeSetting() == hou.updateMode.Manual:
-        raise RuntimeError(
-            "Houdini is in Manual update mode -- viewport capture would "
-            "trigger a fatal OpenGL dialog and hang the connection. Switch "
-            "to Auto Update first "
-            "(hou.setUpdateMode(hou.updateMode.AutoUpdate))."
+        err = ValueError(
+            "Precondition: Houdini is in Manual update mode -- viewport "
+            "capture would trigger a fatal OpenGL dialog and hang the "
+            "connection. Switch to Auto Update first."
         )
+        err.hint = "Call hou.setUpdateMode(hou.updateMode.AutoUpdate) in Houdini, then retry."
+        raise err
 
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     filepath = f"{guards.SNAPSHOT_DIR}mcp_{ts}.jpg"
 
     with hou.undos.group("MCP: viewport_snapshot"):
-        viewport = sv.curViewport()
         cur_frame = int(hou.frame())
         settings = sv.flipbookSettings().stash()
         settings.output(filepath)
