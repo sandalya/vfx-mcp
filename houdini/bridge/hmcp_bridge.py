@@ -232,6 +232,27 @@ def get_node_info(ctx: Context, path: str, max_parms: Optional[int] = None, only
 
 
 @mcp.tool()
+def find_nodes(
+    ctx: Context,
+    name_filter: Optional[str] = None,
+    type_filter: Optional[str] = None,
+    root: str = "/",
+    max_results: int = 100,
+) -> str:
+    """Search for nodes anywhere under `root` (default the whole scene), by
+    a case-insensitive substring of the node's name and/or an exact
+    node-type name (e.g. type_filter='geo'). Use this instead of walking
+    get_network one level at a time when you don't already know which
+    network a node lives in."""
+    params = {"root": root, "max_results": max_results}
+    if name_filter is not None:
+        params["name_filter"] = name_filter
+    if type_filter is not None:
+        params["type_filter"] = type_filter
+    return _call("find_nodes", params)
+
+
+@mcp.tool()
 def describe_commands(ctx: Context) -> str:
     """Returns the plugin's own command list -- for contract-checking against commands_spec.py."""
     return _call("describe_commands", {})
@@ -441,7 +462,7 @@ if __name__ == "__main__":
     _bridge_tool_names = {
         "get_scene_info", "get_geometry_info", "get_node_errors",
         "get_node_type_parms", "list_node_types", "get_node_help",
-        "get_network", "get_node_info", "describe_commands",
+        "get_network", "get_node_info", "find_nodes", "describe_commands",
         # Phase 2 write tools
         "create_node", "connect_nodes", "set_parm", "set_expression",
         "delete_node", "rename_node", "set_position", "set_color",

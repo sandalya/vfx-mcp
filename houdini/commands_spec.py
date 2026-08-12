@@ -89,6 +89,22 @@ COMMANDS = [
         "doc": "Detailed single-node info: parms, inputs, outputs, flags.",
     },
     {
+        "name": "find_nodes",
+        "kind": "read",
+        "params": {
+            "name_filter": "str | None = None",
+            "type_filter": "str | None = None",
+            "root": "str = '/'",
+            "max_results": "int = 100",
+        },
+        "doc": (
+            "Scene-wide (or subtree-wide) node search, filtered by a "
+            "case-insensitive substring of the node's name and/or an exact "
+            "node-type name -- unlike get_network, which only lists one "
+            "network's direct children at a time."
+        ),
+    },
+    {
         "name": "describe_commands",
         "kind": "read",
         "params": {},

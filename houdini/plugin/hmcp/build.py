@@ -176,7 +176,10 @@ def set_expression(node_path, parm_name, expression):
 def delete_node(node_path):
     """Destroy a node -- only if the agent created it earlier this session
     (guards.session_registry). See SessionRegistry's docstring for why
-    that's keyed on sessionId() and not path."""
+    that's keyed on sessionId() and not path. Also refused if the scene's
+    undo stack has moved since hmcp's own last write (guards.undo_watermark)
+    -- a manual edit by the owner in between would otherwise get silently
+    destroyed along with the node."""
     guards.require_sandbox_scene()
     import hou
 
@@ -187,6 +190,7 @@ def delete_node(node_path):
             f"current session -- delete rights are scoped to the agent's "
             f"own work (see guards.SessionRegistry)."
         )
+    guards.undo_watermark.require_unchanged("delete_node")
 
     with hou.undos.group("MCP: delete_node"):
         guards.session_registry.forget(node)

@@ -24,6 +24,7 @@ except ImportError:
     # QTimer's API is identical across both -- no behavior difference below.
     from PySide2 import QtCore
 
+from . import guards
 from .commands import REGISTRY
 
 PORT = 9878
@@ -275,5 +276,13 @@ class HmcpServer:
             response = {"status": "error", "message": str(e), "exception_type": type(e).__name__}
             _add_hint(response, e)
             return response
+
+        if entry["kind"] == "write":
+            # Stage 5b (HMCP_FEEDBACK_LOOP_PLAN.md): re-stamp the undo
+            # watermark after every successful write, centrally, so no
+            # individual handler can forget to. delete_node reads it via
+            # guards.undo_watermark.require_unchanged() before destroying
+            # anything.
+            guards.undo_watermark.record()
 
         return {"status": "success", "result": result}

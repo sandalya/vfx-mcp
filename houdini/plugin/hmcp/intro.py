@@ -248,6 +248,50 @@ def get_network(parent_path):
     return {"parent": parent.path(), "children": children}
 
 
+def find_nodes(name_filter=None, type_filter=None, root="/", max_results=100):
+    """Scene-wide (or subtree-wide) node search. `get_network` only lists
+    one network's direct children at a time -- this walks the whole
+    subtree under `root` in one call, filtered by a case-insensitive
+    substring of the node's name and/or an exact node-type name. Stage 5a
+    of HMCP_FEEDBACK_LOOP_PLAN.md, adapted from the external review's
+    `find_nodes`/`list_children` (EXTERNAL_REVIEW_oculairmedia_houdini-mcp.md
+    section 4.3)."""
+    import hou
+
+    root_node = hou.node(root)
+    if not root_node:
+        return {"status": "error", "message": f"Node not found: {root}"}
+
+    name_needle = name_filter.lower() if name_filter else None
+    matches = []
+    truncated = False
+
+    for node in root_node.allSubChildren():
+        if len(matches) >= max_results:
+            truncated = True
+            break
+        if name_needle and name_needle not in node.name().lower():
+            continue
+        node_type = _safe(lambda: node.type().name(), "unknown")
+        if type_filter and node_type != type_filter:
+            continue
+        matches.append({
+            "name": node.name(),
+            "path": node.path(),
+            "type": node_type,
+            "category": _safe(lambda: node.type().category().name(), "unknown"),
+        })
+
+    return {
+        "root": root_node.path(),
+        "name_filter": name_filter,
+        "type_filter": type_filter,
+        "max_results": max_results,
+        "truncated": truncated,
+        "nodes": matches,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Geometry inspection -- the most important new tool
 # ---------------------------------------------------------------------------

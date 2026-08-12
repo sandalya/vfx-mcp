@@ -173,8 +173,8 @@ Fill this in as you go; it is how the next session knows where you stopped.
 | 1 | Diagnosis + shared plumbing | **done** 2026-08-12 — live-verified on local 20.5.278; pc137 deploy/verify still pending |
 | 2 | Camera control | **done** 2026-08-12 — all 6 commands live-verified and shipped (24 → 30). `viewport_orbit` briefly shipped without, then root-caused (HOM's rotation()/translation() docs are wrong -- confirmed via SideFX staff) and fixed same day |
 | 3 | Non-blocking `render_snapshot` | **done** 2026-08-12 — live-verified end to end (30 → 32 commands); found and fixed two real bugs during verification (dead frame-pin, `camera="fit"` FOV+own-camera-in-bbox) — see Stage 3's own implementation-status note below |
-| 4 | Image delivery from pc137 | not started |
-| 5 | `find_nodes` + undo-revision guard | not started |
+| 4 | Image delivery from pc137 | **done** 2026-08-12 — decided with the owner: no gap yet (all verification through Stage 3 stayed local), so limitation documented in `README.md` instead of building `fetch_render.sh`; revisit if/when remote mode is actually used |
+| 5 | `find_nodes` + undo-revision guard | code written 2026-08-12 (32 → 33 commands), local py_compile/registry/contract checks clean — **not yet live-verified**, needs Sashok's Houdini session |
 
 ---
 
@@ -1282,6 +1282,17 @@ the audit log with megabytes.
 Do this only if Stage 3 leaves an actual gap. If verification stays local,
 document the limitation in `README.md` and move on.
 
+### Stage 4 — decision (2026-08-12)
+
+Checked with the owner rather than guessing (rule 10): current session is
+`HMCP_HOST=127.0.0.1` (local), and every stage through Stage 3 was
+live-verified locally, so the remote-path gap has not actually bitten.
+**Decision: skip `fetch_render.sh` for now, document the limitation in
+`README.md` instead** (see its new "Known limitation: image paths in remote
+mode" section, right after "Opt-in sandbox for project scenes"). Revisit and
+build the `scp` wrapper only once work actually resumes against pc137 in
+remote mode.
+
 ---
 
 ## Stage 5 — two cheap wins from the external review
@@ -1306,6 +1317,87 @@ the write and the revert.
 
 Lives in `guards.py`, alongside `SessionRegistry`, which already documents
 the related session-id lifetime rule (`guards.py:244-247`).
+
+### Stage 5b — design resolved (2026-08-12), before any code
+
+5b's own wording ("agent-initiated revert") doesn't match anything in the
+command set — there is no revert/undo command anywhere in `commands_spec.py`
+(32 commands at the time this was checked). Checked with the owner rather
+than guessing (rule 10), and had an Opus subagent re-derive the intended
+design from `EXTERNAL_REVIEW_oculairmedia_houdini-mcp.md` §4.1 plus the
+actual code shape of every write handler in `build.py`/`render.py`.
+
+**Resolution:** the external review's own "revert" is the automatic
+`performUndo()`-on-exception inside *their* transaction wrapper — a
+mechanism this codebase does not have and 5b does not ask for. What the
+review actually recommends adapting is narrower: *"record the hip file's
+revision... at write time, refuse `delete_node`/undo-adjacent operations if
+it's since moved"* — i.e. harden `delete_node` specifically, alongside its
+existing `SessionRegistry.can_delete()` gate, not build a new revert command.
+
+**Naive-implementation trap, caught before coding:** a watermark recorded
+once per node at creation time (mirroring `SessionRegistry.register_created`)
+would refuse `delete_node` after *any* later hmcp write, since the agent's
+own next command also moves the undo stack. Fix: **one session-level
+watermark, re-stamped after every successful hmcp write** (centralized in
+`server.py`'s dispatch, not duplicated per-handler), checked only by
+`delete_node`. This answers "has anything *other than* hmcp's own last
+write touched the scene since?" — the actual failure mode the review
+describes (the owner's manual edit landing in the gap between two agent
+calls), without also blocking the agent's own normal multi-step sequences.
+
+**HOM API — confirmed live, not guessed (rule 10):** `hou.undos` has no
+public undo-stack position/revision counter. Confirmed headlessly via local
+hython against Houdini 20.5.278: `hou.undos.undoLabels()` exists and
+`areEnabled()` is `True` even headless; a fingerprint of
+`(len(undoLabels()), undoLabels()[-1])` was proven to change correctly
+across a `create` then a `destroy`, each in its own `hou.undos.group()`
+(`(5,'opadd') → (6,'opadd') → (7,'opadd')` — depth incremented by exactly
+one each time). Not yet cross-checked against pc137/21.0.729.
+
+**Owner decisions (2026-08-12):** fail-closed when the fingerprint is
+unreadable (undo disabled, or nothing recorded yet this session) — refuse
+rather than silently let the guard go inert; and scope the check to
+`delete_node` only, not every write handler (widening it would let any
+manual edit block all further agent writes until one lands, judged too
+disruptive to a live session for the actual risk being guarded against).
+
+**Implemented:** `guards.UndoWatermark` (`fingerprint`/`record`/
+`require_unchanged`) right after `SessionRegistry`; `server.py`'s dispatch
+calls `guards.undo_watermark.record()` once, centrally, after every
+successful `kind: "write"` command (so no individual handler can forget to
+re-stamp it); `build.delete_node` calls
+`guards.undo_watermark.require_unchanged("delete_node")` right after its
+existing `SessionRegistry.can_delete()` check.
+
+---
+
+## Stage 5 — implementation status (2026-08-12)
+
+Both 5a (`find_nodes`) and 5b (the watermark guard, see above) coded
+together. Verified so far, **locally, without a running Houdini** (same
+shape as every prior stage's pre-live verification):
+
+- `hython -m py_compile` clean on every file, via
+  `./scripts/deploy_plugin.sh hmcp-local`
+- `hmcp.commands.REGISTRY` builds cleanly to **33** entries (32 → 33) from
+  the deployed local copy; `find_nodes` present with `kind: "read"`,
+  `delete_node` still `kind: "write"`
+- `hmcp_bridge.py`'s `_bridge_tool_names` cross-checked against
+  `commands_spec.COMMAND_NAMES` — matches exactly, 33/33
+- `rg -nE "os\.remove|shutil|unlink|rmtree|requests|subprocess|zipfile|import os"` →
+  zero real hits (only pre-existing module-docstring mentions)
+- `rg "getattr\(hou"` → zero hits
+- `.claude/settings.local.json` auto-allows `find_nodes` (read), per §5a
+
+**Not yet done, needs a live Houdini session:** deploy, reload via
+`hmcp.shelf`, restart Claude Code (Stage 5 adds a command, per §6), then:
+`find_nodes` returns real matches with a working `name_filter`/`type_filter`/
+`root`/`max_results`; `delete_node` on an agent-created node succeeds when
+nothing else has touched the scene since the agent's last write; a manual
+edit by Sashok between two agent calls makes the next `delete_node` refuse
+with the watermark message, not silently succeed; `check_contract.py`
+reports 33 commands agreeing against the live plugin.
 
 ---
 

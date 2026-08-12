@@ -362,3 +362,83 @@ class SessionRegistry:
 # on every plugin reload / Houdini restart -- which is the safe direction
 # for the "does not survive reload" limitation above).
 session_registry = SessionRegistry()
+
+
+# ---------------------------------------------------------------------------
+# Undo-stack watermark -- Stage 5b of HMCP_FEEDBACK_LOOP_PLAN.md
+# ---------------------------------------------------------------------------
+
+
+class UndoWatermark:
+    """Session-level fingerprint of Houdini's undo stack, re-stamped after
+    every hmcp write (server.py's dispatch calls `record()` once per
+    successful "write"-kind command) and checked by `delete_node` right
+    before it destroys anything.
+
+    Not a per-node watermark: recording it once at node-creation time and
+    checking it at that node's own deletion would refuse the delete after
+    *any* later hmcp write (the agent's own next command also moves the
+    stack), not just after a manual edit by the owner. Re-stamping on every
+    hmcp write means the check answers "has anything *other than* hmcp's
+    own last write touched the scene since?" -- which is what this guards
+    against: the agent silently eating a manual edit the owner made in the
+    gap between two of the agent's own calls.
+
+    HOM has no public undo-stack position/revision counter (`hou.undos`
+    exposes `group`/`performUndo`/`performRedo`/`disabler`/`clear` and
+    `undoLabels()`/`redoLabels()`, nothing numeric). The fingerprint is
+    `(len(undoLabels()), undoLabels()[-1])` instead -- stack depth catches
+    pushes/pops, the top label also catches a full stack dropping its
+    oldest entry while depth stays flat. Confirmed live via headless
+    hython against local Houdini 20.5.278 (`hou.undos.undoLabels()` exists,
+    `areEnabled()` is True, and the fingerprint's depth component increments
+    by exactly one across a `create` then a `destroy`, each wrapped in its
+    own `hou.undos.group()`) -- not yet cross-checked against pc137/21.0.729.
+
+    Fails closed by design (rule 10/`require_sandbox_scene`'s own doctrine):
+    unreadable (`undoLabels()` raises, or nothing recorded yet this session)
+    is refused, exactly like "moved since the watermark".
+    """
+
+    def __init__(self):
+        self._fingerprint = None
+
+    def _read(self):
+        import hou
+
+        try:
+            labels = hou.undos.undoLabels()
+        except Exception:
+            return None
+        return (len(labels), labels[-1] if labels else None)
+
+    def record(self):
+        self._fingerprint = self._read()
+
+    def require_unchanged(self, operation):
+        """Raise PermissionError unless the undo stack is exactly where it
+        was after hmcp's own last write. `operation` names the refused
+        command, for the message only."""
+        if self._fingerprint is None:
+            raise PermissionError(
+                f"Refused: {operation} -- no undo-stack watermark recorded "
+                f"yet this session. Any other hmcp write arms it."
+            )
+        current = self._read()
+        if current is None:
+            raise PermissionError(
+                f"Refused: {operation} -- the scene's undo stack could not "
+                f"be read (hou.undos.undoLabels() failed or undo is "
+                f"disabled)."
+            )
+        if current != self._fingerprint:
+            raise PermissionError(
+                f"Refused: {operation} -- the scene's undo stack has moved "
+                f"since hmcp's last write. A manual edit may have landed on "
+                f"top of it; any other hmcp write re-arms this check."
+            )
+
+
+# One watermark per running plugin instance, same lifetime as
+# session_registry above.
+undo_watermark = UndoWatermark()

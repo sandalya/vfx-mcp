@@ -29,6 +29,7 @@ _HANDLERS = {
     "get_node_help": intro.get_node_help,
     "get_network": intro.get_network,
     "get_node_info": intro.get_node_info,
+    "find_nodes": intro.find_nodes,
     "describe_commands": intro.describe_commands,
     # Phase 2: write commands (guarded, sandbox-only -- see build.py).
     "create_node": build.create_node,
