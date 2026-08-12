@@ -498,9 +498,18 @@ def viewport_orbit(dx_degrees=0.0, dy_degrees=0.0):
     clamping: rotation wraps, so out-of-range values are harmless.
     Requires a sandbox scene and a viewport not locked to a camera.
 
-    Camera-local (trackball) composition, empirically resolved in Stage 0
-    (V2/V3): setRotation() alone spins in place, so translation is
-    recomputed around the pivot explicitly."""
+    cam.rotation() is the world-to-camera rotation, not camera-to-world --
+    HOM's own docs say otherwise but are wrong (confirmed against SideFX
+    staff on the forum, sidefx.com/forum/topic/71472). translation() is
+    likewise not a world position: it's pivot + (eye - pivot) expressed IN
+    CAMERA SPACE, which is exactly (0,0,distance) whenever the camera is
+    aimed at its pivot -- so an orbit never needs to touch translation at
+    all, only rotation, and centring is structural rather than something
+    to compute. Live-tested 2026-08-12: composing the rotation delta as if
+    rotation() were camera-to-world (post-multiplying, or building a
+    camera-to-world look-at matrix) drifted the pivot off-frame every
+    time; pre-multiplying by the delta's inverse against the true
+    world-to-camera rotation is what actually keeps it centred."""
     guards.require_sandbox_scene()
     import hou
 
@@ -509,11 +518,9 @@ def viewport_orbit(dx_degrees=0.0, dy_degrees=0.0):
 
     cam = viewport.defaultCamera()
     delta3 = hou.hmath.buildRotate(dy_degrees, dx_degrees, 0).extractRotationMatrix3()
-    old_r, old_t, piv = cam.rotation(), cam.translation(), cam.pivot()
 
     with hou.undos.group("MCP: viewport_orbit"):
-        cam.setRotation(old_r * delta3)
-        cam.setTranslation(piv + (old_t - piv) * delta3)
+        cam.setRotation(delta3.inverted() * cam.rotation())
         viewport.draw()
 
     result = {"viewport": viewport.name(), "dx_degrees": dx_degrees, "dy_degrees": dy_degrees}
@@ -525,9 +532,12 @@ def viewport_orbit(dx_degrees=0.0, dy_degrees=0.0):
 def viewport_dolly(factor):
     """Move the viewport camera toward/away from its pivot by a
     multiplicative factor (< 1 zooms in, > 1 zooms out), keeping the pivot
-    fixed. translation() is world-space (Stage 0's V4), so this scales the
-    pivot-to-camera vector directly. Requires a sandbox scene and a
-    viewport not locked to a camera."""
+    fixed. translation() is pivot + (eye - pivot) in camera space, not a
+    world position (see viewport_orbit's docstring) -- but scaling that
+    camera-space offset scales the world distance identically either way,
+    so this formula was correct even when its old "world-space" rationale
+    (Stage 0's V4) wasn't. Requires a sandbox scene and a viewport not
+    locked to a camera."""
     guards.require_sandbox_scene()
     import hou
 
@@ -538,7 +548,8 @@ def viewport_dolly(factor):
     guards.check_viewport_camera_free(viewport)
 
     cam = viewport.defaultCamera()
-    piv, old_t = cam.pivot(), cam.translation()
+    piv = hou.Vector3(cam.pivot())
+    old_t = hou.Vector3(cam.translation())
 
     with hou.undos.group("MCP: viewport_dolly"):
         cam.setTranslation(piv + (old_t - piv) * factor)

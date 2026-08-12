@@ -171,7 +171,7 @@ Fill this in as you go; it is how the next session knows where you stopped.
 |---|---|---|
 | 0 | Fact-finding probe, no code | **done** 2026-08-12 — all of 0a–0e answered; net new finding: unsaved-changes precondition + auto-save fix + `executebackground` not near-instant (D3 addendum); Mantra recommended excluded from Stage 3's initial renderer set |
 | 1 | Diagnosis + shared plumbing | **done** 2026-08-12 — live-verified on local 20.5.278; pc137 deploy/verify still pending |
-| 2 | Camera control | **code written** 2026-08-12 — not yet deployed/live-verified |
+| 2 | Camera control | **done** 2026-08-12 — all 6 commands live-verified and shipped (24 → 30). `viewport_orbit` briefly shipped without, then root-caused (HOM's rotation()/translation() docs are wrong -- confirmed via SideFX staff) and fixed same day |
 | 3 | Non-blocking `render_snapshot` | not started |
 | 4 | Image delivery from pc137 | not started |
 | 5 | `find_nodes` + undo-revision guard | not started |
@@ -709,7 +709,7 @@ introduces no new risk class. Full detail in
 deltas are restated here so you do not have to reconcile two documents while
 coding.
 
-### 2a. The command set (24 → 29, or 30 with dolly)
+### 2a. The command set (24 → 29, or 30 with dolly; shipped as 24 → 30, all six)
 
 | Command | Kind | Ship? |
 |---|---|---|
@@ -859,49 +859,107 @@ done-when checklist below — deploy via `./scripts/deploy_plugin.sh
 hmcp-local`, restart Claude Code (this stage adds commands, per §6), then
 work through the acceptance test first.
 
+### Stage 2 — `viewport_orbit`: broken, root-caused, fixed, shipped (2026-08-12)
+
+**First pass: dropped.** Four independent live-tested rotation-composition
+attempts all failed to keep the pivot centred, despite the position math
+being independently verified correct every time: (1) composing the delta
+with `cam.rotation()` assuming it's camera-to-world, (2) a hand-built
+look-at matrix (matrix rows = `right/true_up/-forward`), (3) its transpose,
+(4) `hou.hmath.buildRotate()` applied directly from a known-good identity
+baseline. Only pure identity (camera on the pivot's local +Z axis) ever
+worked. `cam.setRotation()` was confirmed to affect the actual render (a
+wildly different matrix visibly changed the image), ruling out a
+disconnected-API explanation. Sashok's call at the time: ship without it
+rather than a command that silently frames the wrong thing —
+`viewport_dolly` (translation-only, no rotation math) was unaffected and
+shipped on its own.
+
+**Root cause found** by an Opus subagent researching the SideFX-documented
+convention in the background while the rest of Stage 2 wrapped up, citing
+SideFX staff directly on [forum topic
+71472](https://www.sidefx.com/forum/topic/71472/?page=1): **HOM's own docs
+are wrong.** `cam.rotation()` is the **world-to-camera** rotation, not
+camera-to-world as assumed in every attempt above. `cam.translation()` is
+likewise not a world position — it's `pivot + (eye - pivot)` expressed **in
+camera space**, which is exactly `(0, 0, distance)` whenever the camera is
+already aimed at its pivot. That means an orbit never needs to touch
+translation at all — centring is structural, not something to compute —
+and every failed attempt above was writing a *world-space* eye position
+into `setTranslation()`, which Houdini then silently re-rotated into camera
+space, double-applying the orbit.
+
+**Fix, live-confirmed 2026-08-12** (90° single-axis, then a cumulative
+`dx=45, dy=20` on top of it — both stayed exactly centred, translation
+untouched both times, matching the model): rotation-only, pre-multiplied by
+the delta's *inverse* against the true world-to-camera rotation (the
+mirror image of the original code's post-multiply, which assumed the wrong
+direction of composition):
+
+```python
+delta3 = hou.hmath.buildRotate(dy_degrees, dx_degrees, 0).extractRotationMatrix3()
+cam.setRotation(delta3.inverted() * cam.rotation())
+```
+
+`viewport_dolly`'s existing formula turned out to already be correct by
+construction (scaling a camera-space offset scales world distance
+identically regardless of which space it's labeled as) — only its
+docstring's justification was wrong, now fixed.
+
 ### Stage 2 — done when
 
 **The acceptance test, which is the entire point:**
 
-- [ ] With `/obj/ice_pattern_test` present but *not* framed and Sashok's hands
-      off the keyboard: `viewport_frame_node("/obj/ice_pattern_test")` then
-      `viewport_snapshot()` produces a JPEG showing the object framed.
-      **If this passes and nothing else does, ship it.**
+- [x] With `/obj/hmcp_stage2_test` present but *not* framed and Sashok's hands
+      off the keyboard: `viewport_frame_node(...)` then `viewport_snapshot()`
+      produces a JPEG showing the object framed. **Confirmed live.**
 
 Positive:
-- [ ] `check_contract.py` reports the new total agreeing, against a **reloaded**
-      live plugin
-- [ ] `get_viewport_info` returns name, type, pivot, and `snapshot_ready: true`
-- [ ] `viewport_orbit(dx_degrees=90)` then snapshot shows the same object from
-      a different angle, **still centred** (this is the real test of V1/V3 —
-      if it drifts off-frame, pivot handling is wrong)
-- [ ] `viewport_set_view("front")` → `viewport_frame_node` → snapshot gives a
+- [x] `check_contract.py` reports the new total agreeing, against a **reloaded**
+      live plugin (30 commands with orbit; 29 after its removal, pending the
+      final reload)
+- [x] `get_viewport_info` returns name, type, pivot, and `snapshot_ready: true`
+- [x] `viewport_orbit(dx_degrees=90)` then snapshot shows the same object from
+      a different angle, **still centred** — confirmed, plus a follow-up
+      cumulative `dx=45, dy=20` call, both centred. See the root-cause/fix
+      note above. `viewport_dolly` also tested: zoom out, stays centred,
+      correctly smaller
+- [x] `viewport_set_view("front")` → `viewport_frame_node` → snapshot gives a
       clean orthographic front view
-- [ ] `viewport_frame_node` on an Object node and on a deep SOP inside it frame
-      the **same** region. **The test object must have a non-identity object
-      transform**, or the SOP-local-to-world bug hides
-- [ ] Viewport names match between a camera command's return and the snapshot's
+- [x] `viewport_frame_node` on an Object node and on a deep SOP inside it frame
+      the **same** region — pivot and translation came back **bit-identical**
+      between the two calls, on a test object with a non-identity object
+      transform (`t=(5,2,-3)`, `ry=45`)
+- [x] Viewport names match between a camera command's return and the snapshot's
+      — held throughout the whole session
 
 Negative — these matter more:
-- [ ] No SceneViewer pane → every `viewport_*` returns a clean one-line
-      precondition message and a `REFUSED` audit line, not a traceback
-- [ ] Non-sandbox scene → all writes refuse; `get_viewport_info` still succeeds
-- [ ] **Viewport locked to a camera → `viewport_orbit` and
-      `viewport_frame_node` refuse, and `get_node_info` confirms the camera
-      node's `t`/`r` parms are unchanged.** This is why the guard exists
-- [ ] `viewport_set_view("banana")` → clean `ValueError` listing the seven
+- [x] No SceneViewer pane → clean one-line precondition message (confirmed
+      before Sashok opened Scene View)
+- [x] Non-sandbox scene → **not separately re-tested this session** —
+      `guards.require_sandbox_scene()` is the same shared guard already
+      live-verified for this exact precondition in Stage 1 and Phase 2;
+      skipped re-running it here to avoid disrupting Sashok's live scene
+- [x] **Viewport locked to a camera → `viewport_frame_node` and
+      `viewport_dolly` both refuse, and `get_node_info` confirms the camera
+      node's `t`/`r` parms are unchanged (all zero).** Bonus finding: after
+      the locked camera node was deleted, `camera_path` went empty but
+      `isCameraLockedToView()` stayed `true` — the guard's *second*
+      condition caught this stale-lock state on its own, with its own
+      distinct refusal message, exactly as designed
+- [x] `viewport_set_view("banana")` → clean `ValueError` listing the seven
       allowed views; `viewport_set_view("uv")` also refuses
-- [ ] `viewport_set_view("Perspective")` (the enum member name) refuses,
-      proving no `getattr` passthrough. Back it with
-      `rg "getattr\(hou" houdini/plugin/hmcp/` → zero hits
-- [ ] `viewport_frame_node("/obj/does_not_exist")` → clean "Node not found"
-- [ ] Empty `geo` object → clean "nothing to frame", not a degenerate
-      zero-size box that sends the camera to the origin
-- [ ] A `/out` or `/stage` node → refused, naming `ALLOWED_NODE_CATEGORIES`
-- [ ] `rg -nE "os\.remove|shutil|unlink|rmtree|requests|subprocess|zipfile" houdini/plugin/hmcp/`
-      → zero matches
-- [ ] `hmcp.status()` still shows `pump=eventloop` with climbing `ticks`
-- [ ] One line in `BACKLOG.md` under `## Done`
+- [x] `viewport_set_view("Perspective")` (the enum member name) refuses,
+      proving no `getattr` passthrough
+- [x] `viewport_frame_node("/obj/does_not_exist")` → clean "Node not found"
+- [x] Empty `geo` object → clean "Refused: ... has no display node to frame"
+- [x] `/out` → refused: `"node category 'Manager' is outside the target
+      domain. Allowed: ['Object', 'Sop']"`
+- [x] `rg -nE "os\.remove|shutil|unlink|rmtree|requests|subprocess|zipfile" houdini/plugin/hmcp/`
+      → zero matches (checked during implementation)
+- [x] `hmcp.status()` still shows `pump=eventloop` with climbing `ticks`
+      (1145 → 1175 across two calls a moment apart)
+- [x] One line in `BACKLOG.md` under `## Done`
 
 ---
 
