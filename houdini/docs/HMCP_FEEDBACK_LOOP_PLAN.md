@@ -171,7 +171,7 @@ Fill this in as you go; it is how the next session knows where you stopped.
 |---|---|---|
 | 0 | Fact-finding probe, no code | **done** 2026-08-12 — all of 0a–0e answered; net new finding: unsaved-changes precondition + auto-save fix + `executebackground` not near-instant (D3 addendum); Mantra recommended excluded from Stage 3's initial renderer set |
 | 1 | Diagnosis + shared plumbing | **done** 2026-08-12 — live-verified on local 20.5.278; pc137 deploy/verify still pending |
-| 2 | Camera control | not started |
+| 2 | Camera control | **code written** 2026-08-12 — not yet deployed/live-verified |
 | 3 | Non-blocking `render_snapshot` | not started |
 | 4 | Image delivery from pc137 | not started |
 | 5 | `find_nodes` + undo-revision guard | not started |
@@ -823,6 +823,41 @@ Auto-allow **only** `mcp__houdini2__get_viewport_info` in
 they have been used a few times — they are non-destructive, but they move the
 human's screen. (Precedent: `BACKLOG.md` 2026-08-09, only read tools are
 auto-allowed.)
+
+### Stage 2 — implementation status (2026-08-12)
+
+All code written per §2a–2h: `guards.check_viewport_camera_free` (after
+`check_expression_language`); `intro.viewport_state` / `intro.update_mode_state`
+/ `intro.get_viewport_info` (read-only, never raises); `build._view_type` /
+`build._node_world_bbox` / the five write handlers
+(`viewport_frame_node`, `viewport_frame_all`, `viewport_set_view`,
+`viewport_orbit`, `viewport_dolly`) plus `viewport_snapshot`'s `"viewport"`
+key (§2f); `commands_spec.py` (24 → 30), `commands.py`, and
+`hmcp_bridge.py`'s tool wrappers + `_bridge_tool_names`, all in sync.
+`.claude/settings.local.json` auto-allows only `get_viewport_info`, per §2h.
+
+Verified so far, **locally, without a running Houdini** (no live plugin
+deploy yet — that needs Sashok, per rule 9):
+- `hython -m py_compile` clean on every changed file (local 20.5.278)
+- `hmcp.commands.REGISTRY` builds cleanly to 30 entries when imported from
+  a deploy-shaped copy of the package (commands_spec.py alongside the
+  other hmcp/*.py files, matching what `deploy_plugin.sh` actually lays
+  out — importing straight from the repo tree fails on this circular
+  import for an unrelated reason: repo-tree `hmcp/` has no
+  `commands_spec.py` sibling at all, only the deployed layout does)
+- `hmcp_bridge.py`'s `_bridge_tool_names` cross-checked against
+  `commands_spec.COMMAND_NAMES` — matches exactly
+- `rg "getattr\(hou" houdini/plugin/hmcp/` → zero hits (one near-miss: the
+  first draft of `_view_type`'s docstring contained that literal string
+  in prose, not code — reworded to avoid a false-positive grep failure)
+- `rg -nE "os\.remove|shutil|unlink|rmtree|requests|subprocess|zipfile"` →
+  only pre-existing module-docstring mentions of the forbidden-import
+  list itself, no real usage
+
+**Not yet done, needs a live Houdini session:** every item in the
+done-when checklist below — deploy via `./scripts/deploy_plugin.sh
+hmcp-local`, restart Claude Code (this stage adds commands, per §6), then
+work through the acceptance test first.
 
 ### Stage 2 — done when
 

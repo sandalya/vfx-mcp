@@ -45,6 +45,13 @@ _HANDLERS = {
     "set_bypass": build.set_bypass,
     "save_scene_as": build.save_scene_as,
     "viewport_snapshot": build.viewport_snapshot,
+    # Stage 2: camera control.
+    "get_viewport_info": intro.get_viewport_info,
+    "viewport_frame_node": build.viewport_frame_node,
+    "viewport_frame_all": build.viewport_frame_all,
+    "viewport_set_view": build.viewport_set_view,
+    "viewport_orbit": build.viewport_orbit,
+    "viewport_dolly": build.viewport_dolly,
 }
 
 

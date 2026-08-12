@@ -409,3 +409,74 @@ def describe_commands():
     """Returns the command list as this plugin sees it -- used by
     scripts/check_contract.py to catch bridge/plugin drift."""
     return {"commands": commands_spec.COMMANDS}
+
+
+# ---------------------------------------------------------------------------
+# Viewport / camera -- Stage 2. Read-only here; the write commands
+# (viewport_frame_node etc.) live in build.py since they mutate viewport
+# state and go through guards.require_sandbox_scene() +
+# guards.check_viewport_camera_free().
+# ---------------------------------------------------------------------------
+
+
+def viewport_state(viewport):
+    """Shared read-only snapshot of a GeometryViewport's state -- used by
+    get_viewport_info below and folded into every Stage 2 camera write
+    handler's return payload in build.py. Every field via _safe_attr; this
+    module must never raise, even against a stale viewport reference."""
+    cam = _safe_attr(viewport, "defaultCamera")
+    pivot = _safe(lambda: list(cam.pivot())) if cam is not None else None
+    translation = _safe(lambda: list(cam.translation())) if cam is not None else None
+    return {
+        "name": _safe_attr(viewport, "name"),
+        "type": _safe(lambda: viewport.type().name()),
+        "camera_path": _safe_attr(viewport, "cameraPath"),
+        "camera_locked": _safe_attr(viewport, "isCameraLockedToView"),
+        "pivot": pivot,
+        "translation": translation,
+    }
+
+
+def update_mode_state():
+    """hou.updateModeSetting()'s name, plus whether it currently allows
+    viewport_snapshot to succeed. Shared by get_viewport_info and every
+    Stage 2 camera write handler's return payload -- per the Stage 1
+    decision to surface this instead of hard-refusing camera commands on
+    a precondition that only actually blocks flipbook (see
+    build.py:viewport_snapshot)."""
+    try:
+        import hou
+
+        mode = hou.updateModeSetting().name()
+        return {"update_mode": mode, "snapshot_ready": mode != "Manual"}
+    except Exception:
+        return {"update_mode": None, "snapshot_ready": None}
+
+
+def get_viewport_info():
+    """Read-only viewport/camera state: name, type, pivot/translation,
+    camera-lock status, and whether the current update_mode allows
+    viewport_snapshot to succeed right now. Available in any scene --
+    never raises, even headless or with no SceneViewer pane open (returns
+    available: False instead of a precondition error, since intro.py
+    commands carry no guard)."""
+    try:
+        import hou
+    except Exception:
+        return {"available": False, "message": "hou module unavailable."}
+
+    if not hasattr(hou, "ui"):
+        return {"available": False, "message": "No viewport -- headless hython session."}
+
+    sv = _safe(lambda: hou.ui.paneTabOfType(hou.paneTabType.SceneViewer))
+    if sv is None:
+        return {"available": False, "message": "No SceneViewer pane is open."}
+
+    viewport = _safe_attr(sv, "curViewport")
+    if viewport is None:
+        return {"available": False, "message": "SceneViewer pane has no current viewport."}
+
+    info = viewport_state(viewport)
+    info["available"] = True
+    info.update(update_mode_state())
+    return info

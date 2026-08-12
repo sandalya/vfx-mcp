@@ -220,6 +220,65 @@ COMMANDS = [
             "C:/houdini_mcp_sandbox/_snapshots/ (must pre-exist)."
         ),
     },
+    # Stage 2: camera control. get_viewport_info is read-only; the rest
+    # move the viewport/its camera, so they require a sandbox scene and a
+    # viewport not locked to a camera (guards.check_viewport_camera_free).
+    {
+        "name": "get_viewport_info",
+        "kind": "read",
+        "params": {},
+        "doc": (
+            "Viewport/camera state: name, type, pivot/translation, "
+            "camera-lock status, and snapshot_ready (whether the current "
+            "update_mode allows viewport_snapshot to succeed right now)."
+        ),
+    },
+    {
+        "name": "viewport_frame_node",
+        "kind": "write",
+        "params": {"node_path": "str"},
+        "doc": (
+            "Aim the viewport at node_path's world-space bounding box -- "
+            "the equivalent of selecting it and pressing Home. Call this "
+            "before viewport_snapshot. Accepts a SOP or an Object node. "
+            "Does not change the user's selection."
+        ),
+    },
+    {
+        "name": "viewport_frame_all",
+        "kind": "write",
+        "params": {},
+        "doc": "Frame the viewport on the entire scene's visible geometry. No arguments.",
+    },
+    {
+        "name": "viewport_set_view",
+        "kind": "write",
+        "params": {"view": "str"},
+        "doc": (
+            "Switch the viewport to a named preset view: perspective, "
+            "top, bottom, front, back, right, or left. 'uv' is not offered."
+        ),
+    },
+    {
+        "name": "viewport_orbit",
+        "kind": "write",
+        "params": {"dx_degrees": "float = 0.0", "dy_degrees": "float = 0.0"},
+        "doc": (
+            "Orbit the viewport camera around its current pivot by "
+            "relative angle deltas, not absolute angles. No clamping -- "
+            "rotation wraps."
+        ),
+    },
+    {
+        "name": "viewport_dolly",
+        "kind": "write",
+        "params": {"factor": "float"},
+        "doc": (
+            "Move the viewport camera toward/away from its pivot by a "
+            "multiplicative factor (< 1 zooms in, > 1 zooms out), pivot "
+            "fixed."
+        ),
+    },
 ]
 
 COMMAND_NAMES = {c["name"] for c in COMMANDS}

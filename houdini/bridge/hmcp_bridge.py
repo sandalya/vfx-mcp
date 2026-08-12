@@ -347,6 +347,62 @@ def viewport_snapshot(ctx: Context) -> str:
     return _call("viewport_snapshot", {})
 
 
+# -------------------------------------------------------------------
+# Stage 2: camera control. get_viewport_info is read-only; the rest move
+# the viewport/its camera and require a sandbox scene plus a viewport not
+# locked to a camera.
+# -------------------------------------------------------------------
+
+@mcp.tool()
+def get_viewport_info(ctx: Context) -> str:
+    """Viewport/camera state: name, type, pivot/translation, camera-lock
+    status, and snapshot_ready (whether the current update_mode allows
+    viewport_snapshot to succeed right now). No arguments, no sandbox
+    requirement -- read-only."""
+    return _call("get_viewport_info", {})
+
+
+@mcp.tool()
+def viewport_frame_node(ctx: Context, node_path: str) -> str:
+    """Aim the Houdini viewport at this node, the equivalent of selecting
+    it and pressing Home. Call this before viewport_snapshot -- the
+    snapshot only captures whatever the viewport already shows. Accepts a
+    SOP or an Object node. Does not change the user's selection. Requires
+    a sandbox scene."""
+    return _call("viewport_frame_node", {"node_path": node_path})
+
+
+@mcp.tool()
+def viewport_frame_all(ctx: Context) -> str:
+    """Frame the viewport on the entire scene's visible geometry -- the
+    'I'm lost' recovery button. No arguments. Requires a sandbox scene."""
+    return _call("viewport_frame_all", {})
+
+
+@mcp.tool()
+def viewport_set_view(ctx: Context, view: str) -> str:
+    """Switch the viewport to a named preset view: 'perspective', 'top',
+    'bottom', 'front', 'back', 'right', or 'left'. Requires a sandbox
+    scene."""
+    return _call("viewport_set_view", {"view": view})
+
+
+@mcp.tool()
+def viewport_orbit(ctx: Context, dx_degrees: float = 0.0, dy_degrees: float = 0.0) -> str:
+    """Orbit the viewport camera around its current pivot by relative
+    angle deltas (not absolute angles). No clamping -- rotation wraps, so
+    out-of-range values are harmless. Requires a sandbox scene."""
+    return _call("viewport_orbit", {"dx_degrees": dx_degrees, "dy_degrees": dy_degrees})
+
+
+@mcp.tool()
+def viewport_dolly(ctx: Context, factor: float) -> str:
+    """Move the viewport camera toward/away from its pivot by a
+    multiplicative factor (< 1 zooms in, > 1 zooms out), pivot fixed.
+    Requires a sandbox scene."""
+    return _call("viewport_dolly", {"factor": factor})
+
+
 def main():
     mcp.run()
 
@@ -365,6 +421,9 @@ if __name__ == "__main__":
         "delete_node", "rename_node", "set_position", "set_color",
         "set_comment", "layout_children", "set_display_flag",
         "set_render_flag", "set_bypass", "save_scene_as", "viewport_snapshot",
+        # Stage 2 write tools
+        "get_viewport_info", "viewport_frame_node", "viewport_frame_all",
+        "viewport_set_view", "viewport_orbit", "viewport_dolly",
     }
     if _bridge_tool_names != commands_spec.COMMAND_NAMES:
         missing_in_bridge = commands_spec.COMMAND_NAMES - _bridge_tool_names

@@ -20,6 +20,7 @@ in this package -- see guards.py's module docstring for why.
 from datetime import datetime
 
 from . import guards
+from . import intro
 
 
 def _require_node(node_path):
@@ -346,4 +347,204 @@ def viewport_snapshot():
         settings.frameRange((cur_frame, cur_frame))
         sv.flipbook(viewport, settings)
 
-    return {"path": filepath}
+    # So a framing/snapshot viewport mismatch in a quad layout is visible
+    # in the transcript instead of silent (Stage 2, §2f).
+    return {"path": filepath, "viewport": viewport.name()}
+
+
+# ---------------------------------------------------------------------------
+# Viewport / camera -- Stage 2
+# ---------------------------------------------------------------------------
+
+
+def _view_type(name):
+    """Map a caller-supplied view name to a hou.geometryViewportType member
+    through an explicit dict -- never a dynamic attribute lookup on the
+    hou namespace keyed by caller input (rule 6: caller strings map
+    through explicit dicts, same class of construct as the blacklist
+    bypasses the rewrite plan rejects). 'uv' is
+    deliberately excluded: a UV viewport is useless for looking at
+    geometry and would silently break the next snapshot."""
+    import hou
+
+    views = {
+        "perspective": hou.geometryViewportType.Perspective,
+        "top": hou.geometryViewportType.Top,
+        "bottom": hou.geometryViewportType.Bottom,
+        "front": hou.geometryViewportType.Front,
+        "back": hou.geometryViewportType.Back,
+        "right": hou.geometryViewportType.Right,
+        "left": hou.geometryViewportType.Left,
+    }
+    vtype = views.get(name)
+    if vtype is None:
+        raise ValueError(f"Refused: unknown view {name!r}. Allowed: {sorted(views)}.")
+    return vtype
+
+
+def _node_world_bbox(node):
+    """World-space bounding box for a SOP or Object node. Transform is
+    `bbox * matrix4` -- there is no hou.BoundingBox.transform() method
+    (Stage 0b confirmed this live).
+
+    Object -> node.displayNode()'s geometry, transformed by
+    node.worldTransform(). Sop -> node.geometry() (SOP-local!), transformed
+    by the nearest ancestor Object's worldTransform() instead -- using the
+    node's own worldTransform() here would be wrong, SOPs don't have one."""
+    category = node.type().category().name()
+
+    if category == "Object":
+        disp = node.displayNode()
+        if disp is None:
+            raise ValueError(f"Refused: {node.path()} has no display node to frame.")
+        geo = disp.geometry()
+        xform = node.worldTransform()
+    elif category == "Sop":
+        ancestor = node.parent()
+        while ancestor is not None and ancestor.type().category().name() != "Object":
+            ancestor = ancestor.parent()
+        if ancestor is None:
+            raise ValueError(f"Refused: no ancestor Object node found for {node.path()}.")
+        geo = node.geometry()
+        xform = ancestor.worldTransform()
+    else:
+        raise ValueError(
+            f"Refused: node category '{category}' is outside the target "
+            f"domain. Allowed: {sorted(guards.ALLOWED_NODE_CATEGORIES)}."
+        )
+
+    if geo is None:
+        raise ValueError(f"Refused: {node.path()} has no evaluable geometry.")
+
+    bbox = geo.boundingBox()
+    if not bbox.isValid():
+        raise ValueError(
+            f"Refused: {node.path()} has nothing to frame -- empty or "
+            f"degenerate bounding box."
+        )
+    return bbox * xform
+
+
+def viewport_frame_node(node_path):
+    """Aim the viewport at node_path's world-space bounding box -- the
+    equivalent of selecting it and pressing Home. **Call this before
+    viewport_snapshot** -- the snapshot only captures whatever the
+    viewport already shows. Accepts a SOP or an Object node. Does not
+    change the user's selection. Requires a sandbox scene and a viewport
+    not locked to a camera."""
+    guards.require_sandbox_scene()
+    import hou
+
+    sv, viewport = _require_scene_viewport()
+    guards.check_viewport_camera_free(viewport)
+    node = _require_node(node_path)
+    world_bbox = _node_world_bbox(node)
+
+    with hou.undos.group("MCP: viewport_frame_node"):
+        viewport.frameBoundingBox(world_bbox)
+        viewport.draw()  # defensive -- see Stage 0's V5/V6 mitigation note
+
+    result = {"node": node.path(), "viewport": viewport.name()}
+    result.update(intro.viewport_state(viewport))
+    result.update(intro.update_mode_state())
+    return result
+
+
+def viewport_frame_all():
+    """Frame the viewport on the entire scene's visible geometry -- the
+    'I'm lost' recovery button. No arguments. Requires a sandbox scene and
+    a viewport not locked to a camera."""
+    guards.require_sandbox_scene()
+    import hou
+
+    sv, viewport = _require_scene_viewport()
+    guards.check_viewport_camera_free(viewport)
+
+    with hou.undos.group("MCP: viewport_frame_all"):
+        viewport.frameAll()
+        viewport.draw()
+
+    result = {"viewport": viewport.name()}
+    result.update(intro.viewport_state(viewport))
+    result.update(intro.update_mode_state())
+    return result
+
+
+def viewport_set_view(view):
+    """Switch the viewport to a named preset view: perspective, top,
+    bottom, front, back, right, or left. 'uv' is not offered. Requires a
+    sandbox scene and a viewport not locked to a camera."""
+    guards.require_sandbox_scene()
+    import hou
+
+    sv, viewport = _require_scene_viewport()
+    guards.check_viewport_camera_free(viewport)
+    vtype = _view_type(view)
+
+    with hou.undos.group("MCP: viewport_set_view"):
+        viewport.changeType(vtype)
+        viewport.draw()
+
+    result = {"view": view, "viewport": viewport.name()}
+    result.update(intro.viewport_state(viewport))
+    result.update(intro.update_mode_state())
+    return result
+
+
+def viewport_orbit(dx_degrees=0.0, dy_degrees=0.0):
+    """Orbit the viewport camera around its current pivot by relative
+    angle deltas (not absolute angles -- an absolute-orientation command
+    would be a set-arbitrary-camera-transform command wearing a hat). No
+    clamping: rotation wraps, so out-of-range values are harmless.
+    Requires a sandbox scene and a viewport not locked to a camera.
+
+    Camera-local (trackball) composition, empirically resolved in Stage 0
+    (V2/V3): setRotation() alone spins in place, so translation is
+    recomputed around the pivot explicitly."""
+    guards.require_sandbox_scene()
+    import hou
+
+    sv, viewport = _require_scene_viewport()
+    guards.check_viewport_camera_free(viewport)
+
+    cam = viewport.defaultCamera()
+    delta3 = hou.hmath.buildRotate(dy_degrees, dx_degrees, 0).extractRotationMatrix3()
+    old_r, old_t, piv = cam.rotation(), cam.translation(), cam.pivot()
+
+    with hou.undos.group("MCP: viewport_orbit"):
+        cam.setRotation(old_r * delta3)
+        cam.setTranslation(piv + (old_t - piv) * delta3)
+        viewport.draw()
+
+    result = {"viewport": viewport.name(), "dx_degrees": dx_degrees, "dy_degrees": dy_degrees}
+    result.update(intro.viewport_state(viewport))
+    result.update(intro.update_mode_state())
+    return result
+
+
+def viewport_dolly(factor):
+    """Move the viewport camera toward/away from its pivot by a
+    multiplicative factor (< 1 zooms in, > 1 zooms out), keeping the pivot
+    fixed. translation() is world-space (Stage 0's V4), so this scales the
+    pivot-to-camera vector directly. Requires a sandbox scene and a
+    viewport not locked to a camera."""
+    guards.require_sandbox_scene()
+    import hou
+
+    if factor <= 0:
+        raise ValueError(f"Refused: factor must be > 0, got {factor!r}.")
+
+    sv, viewport = _require_scene_viewport()
+    guards.check_viewport_camera_free(viewport)
+
+    cam = viewport.defaultCamera()
+    piv, old_t = cam.pivot(), cam.translation()
+
+    with hou.undos.group("MCP: viewport_dolly"):
+        cam.setTranslation(piv + (old_t - piv) * factor)
+        viewport.draw()
+
+    result = {"viewport": viewport.name(), "factor": factor}
+    result.update(intro.viewport_state(viewport))
+    result.update(intro.update_mode_state())
+    return result

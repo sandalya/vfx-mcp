@@ -224,6 +224,32 @@ def check_expression_language(language):
         raise ValueError("Refused: expressions may only use hou.exprLanguage.Hscript.")
 
 
+def check_viewport_camera_free(viewport):
+    """Raise if the viewport is looking through, or locked to, a camera node.
+
+    hou.GeometryViewport.defaultCamera() is documented live: "if a
+    camera/light is locked to the view, changing the settings will change
+    the camera node's parameters." So a camera write (orbit/frame/dolly/
+    set_view) on a viewport locked to e.g. /obj/cam1 would silently move
+    that camera node's own transform parms -- a node outside
+    session_registry, through a path that never touches
+    check_settable_parm. Per this file's module docstring, that gets
+    refused outright, not validated around.
+    """
+    path = viewport.cameraPath()  # "" when not looking through a camera
+    if path:
+        raise PermissionError(
+            f"Refused: the viewport is looking through camera {path!r}. "
+            f"A camera write here would move that node's own transform. "
+            f"Switch the viewport to a free (non-camera) view first."
+        )
+    if viewport.isCameraLockedToView():
+        raise PermissionError(
+            "Refused: the viewport is locked to a camera. Unlock it "
+            "(View -> Lock to Camera off) before running camera commands."
+        )
+
+
 # ---------------------------------------------------------------------------
 # Session-scoped deletion registry
 # ---------------------------------------------------------------------------
