@@ -916,8 +916,8 @@ docstring's justification was wrong, now fixed.
 
 Positive:
 - [x] `check_contract.py` reports the new total agreeing, against a **reloaded**
-      live plugin (30 commands with orbit; 29 after its removal, pending the
-      final reload)
+      live plugin — 30 commands, confirmed after every reload this session
+      including the final one with the fixed `viewport_orbit`
 - [x] `get_viewport_info` returns name, type, pivot, and `snapshot_ready: true`
 - [x] `viewport_orbit(dx_degrees=90)` then snapshot shows the same object from
       a different angle, **still centred** — confirmed, plus a follow-up
