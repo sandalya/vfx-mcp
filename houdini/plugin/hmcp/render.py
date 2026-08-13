@@ -130,10 +130,11 @@ _NON_GEOMETRY_OBJECT_TYPES = {"cam", "light"}
 def _find_displayed_geometry():
     """Every /obj-level Object node with its display flag set -- what
     camera='fit' frames. Simpler than the old plugin's subnet-walking
-    version (HoudiniMCPRender.py:148): this plugin's domain is
-    guards.ALLOWED_NODE_CATEGORIES (Sop/Object), so a plain top-level
-    scan covers everything it could itself have created or that a normal
-    scene displays.
+    version (HoudiniMCPRender.py:148): guards.ALLOWED_NODE_CATEGORIES
+    also includes Vop now, but Vop nodes only ever live nested inside a
+    Sop container's internal network, never as a top-level /obj child, so
+    a plain top-level scan still covers everything it could itself have
+    created or that a normal scene displays.
 
     Excludes camera/light object types: live-tested 2026-08-12, Houdini
     leaves the display flag set on a freshly-created camera object (this

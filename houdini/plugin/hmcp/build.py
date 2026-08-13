@@ -40,6 +40,16 @@ def _require_parm(node, parm_name):
     return parm
 
 
+def _is_ancestor(candidate, node):
+    """True if candidate is an ancestor of node, walking node.parent()."""
+    p = node.parent()
+    while p is not None:
+        if p.path() == candidate.path():
+            return True
+        p = p.parent()
+    return False
+
+
 def _require_scene_viewport():
     """Return (scene_viewer, viewport) for the current SceneViewer pane.
 
@@ -84,7 +94,7 @@ def _require_scene_viewport():
 def create_node(parent_path, node_type, name=None):
     """Create a node under parent_path. Category is derived from the
     parent (parent.childTypeCategory()), not caller-supplied, and checked
-    against guards.ALLOWED_NODE_CATEGORIES (Sop/Object only, Phase 1/2
+    against guards.ALLOWED_NODE_CATEGORIES (Sop/Object/Vop, Phase 1/2
     target domain). Registers the new node so delete_node can remove it
     later this session."""
     guards.require_sandbox_scene()
@@ -638,4 +648,75 @@ def sync_vex_parms(node_path, parm_name="snippet"):
         "parm_name": parm_name,
         "created": created,
         "already_present": already_present,
+    }
+
+
+def promote_parm(source_path, source_parm_name, target_path, target_parm_name=None):
+    """Promote a single float parameter from source up onto target's own
+    interface -- the MCP equivalent of Houdini's "Promote Parameter", for
+    tuning a value nested inside a VOP/subnet network from its containing
+    node instead of opening the network.
+
+    Deliberately narrow, same rule as sync_vex_parms's own docstring:
+    Float parameters only, one component at a time (promote a vector's
+    freqx/freqy/... separately, matching how set_parm already addresses
+    them -- no tuple-component-suffix guessing here). target must be an
+    ancestor of source: this mirrors Houdini's own promotion semantics
+    (expose a nested value on a containing node), not an arbitrary
+    cross-node channel link to anywhere in the scene.
+
+    Never reuses source's own parmTemplate for the new spare parm --
+    that template is tuple-scoped (parm.parmTemplate() on "freqx" would
+    describe all four freq components together) and would drag sibling
+    components in. Instead builds a fresh single-float
+    hou.FloatParmTemplate seeded with source's current value, appends it
+    to target via parmTemplateGroup() (same mechanism sync_vex_parms
+    already uses), then points source's parm at it with a ch()
+    expression. guards.check_settable_parm is the same gate set_parm
+    uses for the write itself.
+    """
+    guards.require_sandbox_scene()
+    import hou
+
+    source = _require_node(source_path)
+    parm = _require_parm(source, source_parm_name)
+    guards.check_settable_parm(parm)
+
+    pt = parm.parmTemplate()
+    if not isinstance(pt, hou.FloatParmTemplate):
+        raise ValueError(
+            f"Refused: promote_parm only supports Float parameters right "
+            f"now (got {pt.type().name() if pt else 'unknown'})."
+        )
+
+    target = _require_node(target_path)
+    if not _is_ancestor(target, source):
+        raise ValueError(
+            f"Refused: {target.path()} is not an ancestor of {source.path()} "
+            f"-- promotion only works up the containment hierarchy, same as "
+            f"Houdini's own Promote Parameter."
+        )
+
+    new_name = target_parm_name or f"{source.name()}_{source_parm_name}"
+    if target.parm(new_name) is not None:
+        raise ValueError(
+            f"Refused: {target.path()} already has a parameter named "
+            f"'{new_name}'."
+        )
+
+    rel = source.relativePathTo(target)
+
+    with hou.undos.group(f"MCP: promote_parm {source_parm_name}"):
+        group = target.parmTemplateGroup()
+        group.append(
+            hou.FloatParmTemplate(new_name, new_name, 1, default_value=(parm.eval(),))
+        )
+        target.setParmTemplateGroup(group)
+        parm.setExpression(f'ch("{rel}/{new_name}")', language=hou.exprLanguage.Hscript)
+
+    return {
+        "source": source.path(),
+        "source_parm": source_parm_name,
+        "target": target.path(),
+        "target_parm": new_name,
     }

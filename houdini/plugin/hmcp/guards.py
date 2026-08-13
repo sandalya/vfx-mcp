@@ -169,7 +169,15 @@ NODE_TYPES_REFUSED = {"python", "pythonscript", "unix", "shell"}
 # proven code from the old plugin. This was wrong at Phase 1 (unexercised,
 # since Phase 1 is read-only) and would have silently refused every /obj
 # node creation in Phase 2 -- fixed here before create_node's first caller.
-ALLOWED_NODE_CATEGORIES = {"Sop", "Object"}
+#
+# "Vop" added later, at the owner's request, to build VOP networks (e.g.
+# Attribute VOP interiors) alongside the VEX wrangle workflow. Same VEX-only
+# risk profile as CODE_PARMS_ALLOWED above: VOP networks compile to VEX,
+# never Python/os/shell, so this doesn't add a capability the module
+# docstring's "do not write the dangerous capability at all" rule forbids --
+# it only widens which node types the existing create_node/set_parm path
+# can reach.
+ALLOWED_NODE_CATEGORIES = {"Sop", "Object", "Vop"}
 
 
 def check_creatable_node_type(type_name, category_name):

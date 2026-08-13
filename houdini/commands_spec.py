@@ -126,7 +126,7 @@ COMMANDS = [
         },
         "doc": (
             "Create a node under parent_path. Category is derived from the "
-            "parent, restricted to Sop/Object (guards.ALLOWED_NODE_CATEGORIES). "
+            "parent, restricted to Sop/Object/Vop (guards.ALLOWED_NODE_CATEGORIES). "
             "No parameters dict -- use set_parm afterwards. Registers the new "
             "node so delete_node can remove it later this session."
         ),
@@ -341,6 +341,27 @@ COMMANDS = [
             "button. chf() only; additive and idempotent, never touches an "
             "existing parm. parm_name is restricted to "
             "guards.CODE_PARMS_ALLOWED (snippet/vexpression)."
+        ),
+    },
+    # Parameter interface: expose a value nested inside a VOP/subnet
+    # network on its containing node's own interface.
+    {
+        "name": "promote_parm",
+        "kind": "write",
+        "params": {
+            "source_path": "str",
+            "source_parm_name": "str",
+            "target_path": "str",
+            "target_parm_name": "str | None = None",
+        },
+        "doc": (
+            "Promote a single Float parameter from source up onto target's "
+            "own interface -- the equivalent of Houdini's 'Promote "
+            "Parameter'. target must be an ancestor of source. Creates a "
+            "new spare float parm on target (default name "
+            "'<source_name>_<source_parm_name>') and points source's parm "
+            "at it with a ch() expression. Float parameters only, one "
+            "component at a time."
         ),
     },
 ]

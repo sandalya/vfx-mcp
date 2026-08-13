@@ -59,6 +59,8 @@ _HANDLERS = {
     "render_status": render.render_status,
     # VEX authoring.
     "sync_vex_parms": build.sync_vex_parms,
+    # Parameter interface.
+    "promote_parm": build.promote_parm,
 }
 
 

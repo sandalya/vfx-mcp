@@ -268,7 +268,7 @@ def describe_commands(ctx: Context) -> str:
 @mcp.tool()
 def create_node(ctx: Context, parent_path: str, node_type: str, name: Optional[str] = None) -> str:
     """Create a node under parent_path (e.g. parent_path='/obj', node_type='geo').
-    Restricted to Sop/Object categories. No parameters dict -- call set_parm
+    Restricted to Sop/Object/Vop categories. No parameters dict -- call set_parm
     afterwards. Requires a sandbox scene."""
     params = {"parent_path": parent_path, "node_type": node_type}
     if name is not None:
@@ -467,6 +467,38 @@ def sync_vex_parms(ctx: Context, node_path: str, parm_name: str = "snippet") -> 
     return _call("sync_vex_parms", {"node_path": node_path, "parm_name": parm_name})
 
 
+# -------------------------------------------------------------------
+# Parameter interface: expose a value nested inside a VOP/subnet network
+# on its containing node's own interface.
+# -------------------------------------------------------------------
+
+@mcp.tool()
+def promote_parm(
+    ctx: Context,
+    source_path: str,
+    source_parm_name: str,
+    target_path: str,
+    target_parm_name: Optional[str] = None,
+) -> str:
+    """Promote a single Float parameter from source up onto target's own
+    interface -- the equivalent of Houdini's "Promote Parameter", so a
+    value nested inside a VOP/subnet network can be tuned from its
+    containing node instead of opening the network. target must be an
+    ancestor of source. Creates a new spare float parm on target
+    (default name '<source_name>_<source_parm_name>') and points
+    source's parm at it with a ch() expression. Float parameters only,
+    one component at a time (promote freqx/freqy/... separately).
+    Requires a sandbox scene."""
+    params = {
+        "source_path": source_path,
+        "source_parm_name": source_parm_name,
+        "target_path": target_path,
+    }
+    if target_parm_name is not None:
+        params["target_parm_name"] = target_parm_name
+    return _call("promote_parm", params)
+
+
 def main():
     mcp.run()
 
@@ -492,6 +524,8 @@ if __name__ == "__main__":
         "render_snapshot", "render_status",
         # VEX authoring
         "sync_vex_parms",
+        # Parameter interface
+        "promote_parm",
     }
     if _bridge_tool_names != commands_spec.COMMAND_NAMES:
         missing_in_bridge = commands_spec.COMMAND_NAMES - _bridge_tool_names
