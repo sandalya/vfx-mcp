@@ -17,6 +17,7 @@ No `import os` / `shutil` / `requests` / `subprocess` / `zipfile` anywhere
 in this package -- see guards.py's module docstring for why.
 """
 
+import re
 from datetime import datetime
 
 from . import guards
@@ -563,3 +564,78 @@ def viewport_dolly(factor):
     result.update(intro.viewport_state(viewport))
     result.update(intro.update_mode_state())
     return result
+
+
+# ---------------------------------------------------------------------------
+# VEX authoring
+# ---------------------------------------------------------------------------
+
+# chf() only -- scalar float. `chv`/`chs`/`chi`/`ch` are deliberately not
+# matched: the concrete use case is float sliders, and this package's rule
+# is to not write the capability at all until it's needed (guards.py's
+# module docstring), rather than write four template branches on spec.
+_CHF_CALL = re.compile(r'chf\(\s*"([A-Za-z_][A-Za-z0-9_]*)"\s*\)')
+
+
+def sync_vex_parms(node_path, parm_name="snippet"):
+    """Create a spare float parameter for every unique chf("name") call in
+    a node's VEX code parm -- the MCP equivalent of the gear icon in
+    Houdini's own code editor ("Creates spare parameters for each unique
+    call of ch()"), which has no HOM entry point.
+
+    Scope, deliberately narrow:
+      - chf() only (see _CHF_CALL above). chv/chs/chi/ch are not handled.
+      - parm_name is restricted to guards.CODE_PARMS_ALLOWED
+        (snippet/vexpression) -- the same VEX-only whitelist set_parm uses.
+        Never a Python/callback parm.
+      - Strictly additive: a name that already resolves to a parameter on
+        the node (spare or built-in) is reported in `already_present` and
+        left completely untouched -- nothing is ever overwritten, retyped
+        or re-defaulted. That makes the command idempotent and safe to
+        call repeatedly as the snippet grows.
+
+    Reads the raw, unexpanded parm text (hou.Parm.unexpandedString(), not
+    eval()): code often contains `$` sequences, and evaluating them here
+    would scan expanded text that isn't what the node actually stores.
+    """
+    guards.require_sandbox_scene()
+    import hou
+
+    if parm_name not in guards.CODE_PARMS_ALLOWED:
+        raise ValueError(
+            f"Refused: '{parm_name}' is not a VEX code parameter. Allowed: "
+            f"{sorted(guards.CODE_PARMS_ALLOWED)}."
+        )
+
+    node = _require_node(node_path)
+    parm = _require_parm(node, parm_name)
+    code = parm.unexpandedString()
+
+    # Unique, in order of first appearance -- so the new sliders land on
+    # the node in the same order the artist wrote them.
+    found = []
+    for match in _CHF_CALL.finditer(code):
+        name = match.group(1)
+        if name not in found:
+            found.append(name)
+
+    already_present = [name for name in found if node.parm(name) is not None]
+    missing = [name for name in found if node.parm(name) is None]
+
+    created = []
+    if missing:
+        with hou.undos.group(f"MCP: sync_vex_parms {parm_name}"):
+            group = node.parmTemplateGroup()
+            for name in missing:
+                group.append(
+                    hou.FloatParmTemplate(name, name, 1, default_value=(0.0,))
+                )
+            node.setParmTemplateGroup(group)
+        created = missing
+
+    return {
+        "path": node.path(),
+        "parm_name": parm_name,
+        "created": created,
+        "already_present": already_present,
+    }

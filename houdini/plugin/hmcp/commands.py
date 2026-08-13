@@ -57,6 +57,8 @@ _HANDLERS = {
     # Stage 3: non-blocking render.
     "render_snapshot": render.render_snapshot,
     "render_status": render.render_status,
+    # VEX authoring.
+    "sync_vex_parms": build.sync_vex_parms,
 }
 
 

@@ -450,6 +450,23 @@ def render_status(ctx: Context) -> str:
     return _call("render_status", {})
 
 
+# -------------------------------------------------------------------
+# VEX authoring: promote the chf() calls in a wrangle's snippet into real
+# spare sliders on the node.
+# -------------------------------------------------------------------
+
+@mcp.tool()
+def sync_vex_parms(ctx: Context, node_path: str, parm_name: str = "snippet") -> str:
+    """Create a spare float parameter for each unique chf("name") call in a
+    node's VEX code -- the equivalent of the gear icon in Houdini's code
+    editor ("Creates spare parameters for each unique call of ch()"). Call
+    this after writing a wrangle's snippet so its tunables become sliders.
+    chf() only (not chv/chs/chi/ch); additive and idempotent -- an existing
+    parameter is reported back and never overwritten. parm_name must be
+    'snippet' or 'vexpression'. Requires a sandbox scene."""
+    return _call("sync_vex_parms", {"node_path": node_path, "parm_name": parm_name})
+
+
 def main():
     mcp.run()
 
@@ -473,6 +490,8 @@ if __name__ == "__main__":
         "viewport_set_view", "viewport_orbit", "viewport_dolly",
         # Stage 3: non-blocking render
         "render_snapshot", "render_status",
+        # VEX authoring
+        "sync_vex_parms",
     }
     if _bridge_tool_names != commands_spec.COMMAND_NAMES:
         missing_in_bridge = commands_spec.COMMAND_NAMES - _bridge_tool_names

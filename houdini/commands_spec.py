@@ -328,6 +328,21 @@ COMMANDS = [
             "pending: false if nothing is pending. Never raises."
         ),
     },
+    # VEX authoring: turn the chf() calls already written in a wrangle's
+    # snippet into real spare sliders on the node.
+    {
+        "name": "sync_vex_parms",
+        "kind": "write",
+        "params": {"node_path": "str", "parm_name": "str = 'snippet'"},
+        "doc": (
+            "Create a spare float parameter for each unique chf(\"name\") "
+            "call in a node's VEX code parm -- the equivalent of Houdini's "
+            "own 'Creates spare parameters for each unique call of ch()' "
+            "button. chf() only; additive and idempotent, never touches an "
+            "existing parm. parm_name is restricted to "
+            "guards.CODE_PARMS_ALLOWED (snippet/vexpression)."
+        ),
+    },
 ]
 
 COMMAND_NAMES = {c["name"] for c in COMMANDS}
