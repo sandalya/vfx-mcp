@@ -1,0 +1,59 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ssh pc137:*)",
+      "Bash(ssh -o ConnectTimeout=*:*)",
+      "Read(C:\\Users\\gamai\\vfx-mcp\\**)",
+      "Read(C:\\Users\\gamai\\backups\\**)",
+      "Read(C:\\Users\\gamai\\.ssh\\config)",
+      "Write(C:\\Users\\gamai\\vfx-mcp\\**)"
+    ],
+    "deny": [
+      "Bash(rm *)",
+      "Bash(Remove-Item*)",
+      "Bash(rmdir*)",
+      "Bash(del *)",
+      "Bash(Format-Volume*)",
+      "Bash(Format*)",
+      "Bash(*shutdown*)",
+      "Bash(*Restart-Computer*)",
+      "Bash(*Stop-Computer*)",
+      "Bash(* /F *)",
+      "Bash(taskkill*)",
+      "Bash(Stop-Process*)",
+      "Bash(reg delete*)",
+      "Bash(*Set-ExecutionPolicy*)",
+      "Bash(*Disable-WindowsOptionalFeature*)",
+      "Bash(*Uninstall-*)",
+      "Read(C:\\Users\\gamai\\.ssh\\id_*)",
+      "Read(**/.env)",
+      "Read(**/*.env)",
+      "Read(C:\\Windows\\**)",
+      "Write(C:\\Users\\gamai\\.ssh\\id_*)",
+      "Write(C:\\Windows\\**)",
+      "Write(C:\\Program Files\\**)",
+      "Write(C:\\Program Files (x86)\\**)",
+      "Bash(git push --force*)",
+      "Bash(git push -f*)",
+      "Bash(git reset --hard*)",
+      "Bash(git clean -f*)",
+      "Bash(git branch -D*)",
+      "Bash(git checkout -- *)",
+      "Bash(git restore *)"
+    ]
+  },
+  "hooks": {
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "git -C \"${CLAUDE_PROJECT_DIR:-.}\" status --porcelain -- \"*docs/plans/*\" 2>/dev/null | grep -q . || printf '%s' '{\"hookSpecificOutput\": {\"hookEventName\": \"SubagentStop\", \"additionalContext\": \"A subagent just finished and nothing under docs/plans/ has changed. If it produced research, findings, or a plan, write that to <stack>/docs/plans/<NAME>.md BEFORE reporting it in chat, then split its durable parts out to the stack DESIGN and NOTES docs -- see root CLAUDE.md, Document lifecycle. If the subagent was only a lookup with nothing durable, ignore this.\"}}'",
+            "timeout": 10,
+            "statusMessage": "Checking research was persisted"
+          }
+        ]
+      }
+    ]
+  }
+}

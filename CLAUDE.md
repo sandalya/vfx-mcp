@@ -76,10 +76,21 @@ work was happening*. Four rules prevent that:
    what order, what is deliberately out, what is still unknown. Everything
    durable it discovers moves out as it is discovered.
 
-A subagent's finished research still gets written to a file rather than left
-in chat — but it lands in `plans/` and inherits this lifecycle. Its durable
-findings are split out to the notes/design docs on the first read-through
-with the user, not saved up for the end. What remains is a plan.
+### Subagent research — the subagent writes the doc, not you afterwards
+
+Do not spawn a research subagent and then work out where its output goes.
+Put the destination in its prompt: *"write your findings to
+`<stack>/docs/plans/<NAME>.md` before returning; your chat report is a
+summary of that file, not the deliverable."* The file then exists before the
+result is ever read, and nothing depends on remembering after the fact.
+
+That doc lands in `plans/` and inherits this lifecycle. Its durable findings
+are split out to the notes and design docs at the **first** read-through
+with the user, not saved up for the end. If nothing is left after the split,
+it was research rather than a plan, and the file in `plans/` goes away.
+
+Backstop: a `SubagentStop` hook in `.claude/settings.json` fires when a
+subagent finishes and nothing under `docs/plans/` has changed, and says so.
 
 ### Partial harvest — the normal case
 

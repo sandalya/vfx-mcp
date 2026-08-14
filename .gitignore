@@ -1,6 +1,7 @@
 .venv/
 .claude/*
 !.claude/commands/
+!.claude/settings.json
 __pycache__/
 *.pyc
 urls.env
