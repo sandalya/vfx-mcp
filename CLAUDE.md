@@ -17,6 +17,20 @@ Keep it to what changed and whether it's verified — no incident narrative, no
 *what and when*, not a debugging diary; it gets read fresh every session, so
 weight here is paid every time.
 
+**That line is the trigger for filing everything else.** At the same moment,
+before moving on, answer three questions:
+
+1. Did this block establish a fact that was expensive to measure, or a
+   failure mode that fails silently? → the stack's `*_NOTES.md`, now
+2. Did it settle something a future session could undo by accident? → the
+   dated decision log in the stack's `*_DESIGN.md`, now
+3. Did it close a stage of a plan in `docs/plans/`? → collapse that stage's
+   section to a status line. If it was the last stage, harvest and delete
+   the plan — see *Document lifecycle* below
+
+Three "no"s is a normal answer and costs seconds. Skipping the questions is
+exactly what produces a 1500-line plan nobody can delete.
+
 Anything more detailed (why, how it was diagnosed, dead ends, gotchas) goes in
 the **commit message body** instead. Git history costs nothing until someone
 explicitly asks for it (`git log`, `git show <sha>`) — that's where the full
