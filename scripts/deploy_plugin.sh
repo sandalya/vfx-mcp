@@ -6,7 +6,7 @@
 #
 # "houdini" deploys the OLD plugin (port 9876, untouched, still in
 # production use). "hmcp" deploys the NEW plugin package under rewrite
-# (houdini/docs/HOUDINI_MCP_REWRITE_PLAN.md; port 9878, separate process,
+# (houdini/docs/HMCP_DESIGN.md; port 9878, separate process,
 # separate sandbox-only write boundary). "all" does not include hmcp --
 # it's opted into explicitly until Phase 3 passes and the old plugin is
 # retired. "hmcp-local" deploys the same hmcp package to THIS machine's own

@@ -34,8 +34,8 @@ PORT = 9878
 # address ever changes.
 ALLOWED_CLIENTS = {"127.0.0.1", "10.10.11.41", "10.10.11.31"}
 
-# Audit + diagnostic log (see houdini/docs/HOUDINI_MCP_REWRITE_PLAN.md
-# section 5). Resolved from Houdini's own prefs dir rather than hardcoded:
+# Audit + diagnostic log (see houdini/docs/HMCP_DESIGN.md section 2 --
+# this is one of the three permitted file writes). Resolved from Houdini's own prefs dir rather than hardcoded:
 # the old constant was "C:/Users/Admin/houdini_mcp_audit.log" -- pc137's
 # profile, which doesn't exist on the local machine, so every local write
 # failed into _audit's swallow-everything except and local mode ran with no
@@ -278,7 +278,7 @@ class HmcpServer:
             return response
 
         if entry["kind"] == "write":
-            # Stage 5b (HMCP_FEEDBACK_LOOP_PLAN.md): re-stamp the undo
+            # Re-stamp the undo
             # watermark after every successful write, centrally, so no
             # individual handler can forget to. delete_node reads it via
             # guards.undo_watermark.require_unchanged() before destroying

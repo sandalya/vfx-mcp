@@ -29,6 +29,43 @@ blame is for.
 
 No memory update unless the user asks.
 
+## Document lifecycle — plans die, facts get rehomed
+
+Three genres of document, and only one of them lives forever:
+
+| Genre | Where | Lifetime |
+|---|---|---|
+| **Plan** — instructions for work not yet done | `<stack>/docs/plans/` | ends when the work lands |
+| **Reference** — how it works *now* | `<stack>/docs/`, `README.md` | permanent, edited in place |
+| **Notes / gotchas** — measured facts, silent failure modes | `<stack>/docs/*_NOTES.md`, triage docs | permanent, appended to |
+
+A non-empty `plans/` means there is open work. That is the whole point of the
+folder — "should this still exist?" answerable at a glance.
+
+**When a plan closes, harvest it, then delete it.** Fixed addresses:
+
+- how it works now → the reference doc / `README.md`, **edited in place**
+- why it's this way, don't undo it → the decision log in the stack's design
+  doc, or a docstring at the guard it protects
+- a fact that was expensive to measure, or a failure mode that's silent →
+  the notes doc
+- what and when → one line in `BACKLOG.md` under `## Done`
+- everything else — dead ends, alternatives, verification transcripts, the
+  full reasoning → **the body of the commit that deletes the doc**
+
+Deleting loses nothing: `git show <sha>^:path/to/doc.md` brings it back
+whole, and the design doc's "superseded documents" section records the
+pointer. The difference is that git costs no context until someone asks.
+
+If a fact lives *only* in a closed plan, that's a filing bug — move it, don't
+keep the plan alive for it. Same rule for `BACKLOG.md`'s `## Done`: it is read
+fresh every session, so trim old entries into `BACKLOG_ARCHIVE.md` rather than
+letting it grow without bound.
+
+Before deleting, rewrite the references that point at the doc — code
+comments and docstrings especially, since those are instructions to whoever
+edits that code next.
+
 ## Safety rules (shared, both stacks)
 
 - Destructive actions (deleting files/nodes, force-git, changing production

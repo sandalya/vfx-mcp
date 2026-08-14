@@ -1,8 +1,8 @@
 """
-render.py -- Stage 3: non-blocking render_snapshot
-(houdini/docs/HMCP_FEEDBACK_LOOP_PLAN.md).
+render.py -- non-blocking render_snapshot
+(design and decisions: houdini/docs/HMCP_DESIGN.md D7/D8/D11/D12).
 
-Two commands, not one, because the render runs out-of-process (plan D3):
+Two commands, not one, because the render runs out-of-process:
 render_snapshot() spawns a background Karma render and returns
 immediately; render_status() polls the single pending slot. Every
 safety-relevant constant/check this file calls into
@@ -107,11 +107,11 @@ def _get_or_create_render_camera():
 
 def _build_viewport_camera():
     """camera='viewport': copy the SceneViewer's current camera onto
-    /obj/hmcp_cam via the 1-argument saveViewToCamera() -- the signature
-    Stage 0d confirmed live (the 2-arg form doesn't exist on this build,
-    contradicting HMCP_CAMERA_CONTROL_PLAN.md's note that it's
-    deprecated -- see D2). GUI-only; render_snapshot itself checks
-    hou.ui before calling this (plan §3e)."""
+    /obj/hmcp_cam via the 1-argument saveViewToCamera() -- the only
+    signature that exists on these builds, confirmed live (see
+    houdini/docs/HMCP_HOUDINI_NOTES.md). Calling it internally on a
+    plugin-owned camera is deliberate and bounded -- HMCP_DESIGN.md D6.
+    GUI-only; render_snapshot itself checks hou.ui before calling this."""
     import hou
 
     sv, viewport = build._require_scene_viewport()

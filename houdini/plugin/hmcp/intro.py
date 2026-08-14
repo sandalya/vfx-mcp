@@ -253,9 +253,9 @@ def find_nodes(name_filter=None, type_filter=None, root="/", max_results=100):
     one network's direct children at a time -- this walks the whole
     subtree under `root` in one call, filtered by a case-insensitive
     substring of the node's name and/or an exact node-type name. Stage 5a
-    of HMCP_FEEDBACK_LOOP_PLAN.md, adapted from the external review's
-    `find_nodes`/`list_children` (EXTERNAL_REVIEW_oculairmedia_houdini-mcp.md
-    section 4.3)."""
+    Adapted from an external review's `find_nodes`/`list_children`; see
+    houdini/docs/HMCP_DESIGN.md section 6 for what else that review
+    proposed and why the rest was declined."""
     import hou
 
     root_node = hou.node(root)

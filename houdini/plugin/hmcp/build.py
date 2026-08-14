@@ -1,5 +1,5 @@
 """
-build.py -- Phase 2 write commands (houdini/docs/HOUDINI_MCP_REWRITE_PLAN.md).
+build.py -- write commands (doctrine: houdini/docs/HMCP_DESIGN.md).
 
 Every handler calls guards.require_sandbox_scene() before doing anything
 (save_scene_as is the one documented exception, gated by

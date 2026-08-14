@@ -8,8 +8,9 @@ and a lighter secondary look at Vellum (SOP-context Configure/Solve/constraints)
 No DOPs, no Solaris, no lighting.
 
 Sibling docs, read them before implementing anything here:
-`HOUDINI_MCP_REWRITE_PLAN.md` (doctrine, safety model, phases),
-`HMCP_CAMERA_CONTROL_PLAN.md`, `HMCP_HEADLESS_RENDER_PLAN.md`.
+`../HMCP_DESIGN.md` (doctrine, safety model, decision log),
+`../HMCP_HOUDINI_NOTES.md` (measured API facts),
+`HMCP_HEADLESS_WORKER_PLAN.md` (the deferred headless worker).
 
 ---
 
@@ -523,11 +524,11 @@ convincing Houdini setups", then rank the actual obstacles:
 | 4 | Node/parm recall | Already solved by Tier 0 introspection |
 | 5 | Nothing measures whether the agent is improving | **No** |
 
-Obstacles 1 and 3 are already scoped in `HMCP_CAMERA_CONTROL_PLAN.md`
-(`viewport_frame_node` → deterministic framing) and
-`HMCP_HEADLESS_RENDER_PLAN.md` (Track A `render_snapshot` → a lit PNG the agent
-can actually read; Track B headless worker → unattended iteration that never
-touches the owner's session). Neither has shipped.
+Obstacles 1 and 3 have since been addressed: `viewport_frame_node`
+(deterministic framing) and `render_snapshot` (a lit PNG the agent can
+actually read) both shipped 2026-08-12. Unattended iteration that never
+touches the owner's session still depends on the headless worker
+(`HMCP_HEADLESS_WORKER_PLAN.md`), which has not shipped.
 
 **Therefore: the highest-leverage work is not the cookbook, and it is already
 written down.**
@@ -590,7 +591,7 @@ document gets built, build this.**
 
 **A4 — A small golden-task eval set (6–8 tasks), not a large library.** Each is
 a target with a T0–T4 contract that can be re-run whenever tooling changes.
-`HOUDINI_MCP_REWRITE_PLAN.md` deferred "recipes / eval harness … until there is
+The original rewrite deferred "recipes / eval harness … until there is
 something worth recording". After the Phase 3 rock and the ice-cave attempts,
 there now is. Without this, there is no way to answer "did the cookbook help?" —
 and that question will be asked.
@@ -684,10 +685,10 @@ it is a legitimate trade, just not the one I would make.
 
 Read before implementing:
 
-- `houdini/docs/HOUDINI_MCP_REWRITE_PLAN.md` — doctrine, safety model, §4 in particular
-- `houdini/docs/HMCP_CAMERA_CONTROL_PLAN.md` — deterministic framing, a T5 prerequisite
-- `houdini/docs/HMCP_HEADLESS_RENDER_PLAN.md` — lit renders and unattended iteration
-- `houdini/commands_spec.py` — the 24 commands that exist; note the absence of frame control
+- `houdini/docs/HMCP_DESIGN.md` — doctrine, safety model, decision log
+- `houdini/docs/HMCP_HOUDINI_NOTES.md` — measured API facts and failure modes
+- `houdini/docs/plans/HMCP_HEADLESS_WORKER_PLAN.md` — unattended iteration
+- `houdini/commands_spec.py` — the commands that exist; note the absence of frame control
 - `houdini/references/frozen_cave/NOTES.md` — the precedent §3.6 builds on
 - `scripts/dump_scene.py` — the seed of `hip_to_recipe.py` (§4.2 A2)
 

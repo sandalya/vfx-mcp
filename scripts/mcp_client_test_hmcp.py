@@ -7,8 +7,8 @@ it as a stdio subprocess (exactly how Claude Code would) and talks to it
 through mcp.client.stdio + ClientSession: initialize, list_tools,
 call_tool. Same pattern as mcp_client_test_nuke.py.
 
-Runs the Phase 1 verification checklist from
-houdini/docs/HOUDINI_MCP_REWRITE_PLAN.md end to end.
+Exercises the full MCP path (stdio protocol -> bridge -> plugin) end to
+end; see houdini/docs/HMCP_DESIGN.md section 9.
 """
 import asyncio
 import os

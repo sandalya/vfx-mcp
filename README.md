@@ -31,6 +31,7 @@ vfx-mcp/                        ← git repo (github.com/sandalya/vfx-mcp)
 ├── README.md                   ← цей файл (читається CD через get_project_context)
 ├── CLAUDE.md                   ← shared safety doctrine, one copy only
 ├── BACKLOG.md                  ← живий список done / TODO / known issues
+├── BACKLOG_ARCHIVE.md          ← старі Done-записи (не читається щосесії)
 ├── .gitignore
 ├── houdini/
 │   ├── CLAUDE.md                ← Houdini-specific rules
@@ -39,7 +40,11 @@ vfx-mcp/                        ← git repo (github.com/sandalya/vfx-mcp)
 │   ├── plugin/HoudiniMCPRender.py
 │   └── docs/
 │       ├── SCENE_ANALYSIS.md            ← Дамп реальної production сцени, parm vocabulary
-│       └── HOUDINI_MCP_REWRITE_PLAN.md  ← Execution plan for the new hmcp/ plugin layer
+│       ├── HMCP_DESIGN.md               ← hmcp doctrine, safety model, decision log (read before touching hmcp/)
+│       ├── HMCP_HOUDINI_NOTES.md        ← Measured HOM API facts and failure modes
+│       ├── HMCP_LOCAL_TIMEOUT_TRIAGE.md ← Why the poll pump is an event-loop callback
+│       └── plans/                       ← Work not yet built. Non-empty = open work; a closed plan is
+│                                        harvested into the docs above and deleted
 ├── nuke/
 │   ├── CLAUDE.md                ← Nuke-specific rules
 │   ├── bridge/nuke_mcp_bridge.py        ← Nuke's counterpart bridge (port 9877, see "Nuke MCP bridge" below)
@@ -249,14 +254,13 @@ Read tool opens it directly. **In remote mode (the default,
 `HMCP_HOST=10.10.10.31`), the path is on pc137 -- Claude Code cannot Read it,
 since it never receives the image, only the path string.**
 
-This is `HMCP_FEEDBACK_LOOP_PLAN.md` Stage 4, deliberately left undone: the
-plan makes it conditional ("do this only if Stage 3 leaves an actual gap"),
-and every stage so far (0-3) was live-verified in local mode, so the gap has
-not actually bitten yet. The designed fix if/when it does --
+This is deliberately left undone: it was made conditional on the gap actually
+biting, and all verification so far has happened in local mode, so it has
+not. The designed fix if/when it does --
 `scripts/fetch_render.sh`, a thin `scp` wrapper on the **bridge** side (the
 plugin's no-`subprocess` doctrine only applies inside
-`houdini/plugin/hmcp/`) -- is fully specified in the plan's Stage 4 section
-but not built. Revisit when work actually resumes against pc137 in remote
+`houdini/plugin/hmcp/`) -- is specified in
+`houdini/docs/plans/HMCP_HEADLESS_WORKER_PLAN.md` section 6 but not built. Revisit when work actually resumes against pc137 in remote
 mode.
 
 ---

@@ -5,7 +5,7 @@ hmcp_bridge.py
 Bridge script for the NEW Houdini plugin (houdini/plugin/hmcp/, port 9878,
 read-only in Phase 1). Registered in Claude Code as `houdini2` so the
 existing Claude Desktop `houdini` entry (old plugin, port 9876) is not
-disturbed -- see houdini/docs/HOUDINI_MCP_REWRITE_PLAN.md.
+disturbed -- see houdini/docs/HMCP_DESIGN.md.
 
 Every tool here is generated straight off houdini/commands_spec.py, the
 single source of truth also used by the plugin's dispatcher

@@ -1,7 +1,7 @@
 """
 guards.py — the entire hmcp safety layer, in one reviewable file.
 
-Design rule (see houdini/docs/HOUDINI_MCP_REWRITE_PLAN.md, section 4):
+Design rule (see houdini/docs/HMCP_DESIGN.md, section 2):
 the plugin runs inside the owner's Houdini process with full OS-level
 access to the machine, including mounted studio shares. There is no
 sandbox, no jail, no privilege boundary. The only barrier is which
@@ -259,7 +259,8 @@ def check_viewport_camera_free(viewport):
 
 
 # ---------------------------------------------------------------------------
-# Render -- Stage 3 (houdini/docs/HMCP_FEEDBACK_LOOP_PLAN.md)
+# Render -- see houdini/docs/HMCP_DESIGN.md D7/D8/D11/D12 for the
+# decisions behind the descriptor table, the auto-save and Karma-only.
 # ---------------------------------------------------------------------------
 
 RENDER_DIR = "c:/houdini_mcp_sandbox/_renders/"  # must pre-exist; plugin never creates it
@@ -373,7 +374,7 @@ session_registry = SessionRegistry()
 
 
 # ---------------------------------------------------------------------------
-# Undo-stack watermark -- Stage 5b of HMCP_FEEDBACK_LOOP_PLAN.md
+# Undo-stack watermark -- rationale in houdini/docs/HMCP_DESIGN.md section 4
 # ---------------------------------------------------------------------------
 
 
