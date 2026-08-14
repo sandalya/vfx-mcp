@@ -9,8 +9,8 @@ No DOPs, no Solaris, no lighting.
 
 Sibling docs, read them before implementing anything here:
 `../HMCP_DESIGN.md` (doctrine, safety model, decision log),
-`../HMCP_HOUDINI_NOTES.md` (measured API facts),
-`HMCP_HEADLESS_WORKER_PLAN.md` (the deferred headless worker).
+`../HMCP_HOUDINI_NOTES.md` (measured API facts). What is deferred and why
+is in `../HMCP_DESIGN.md` section 7.
 
 ---
 
@@ -527,8 +527,8 @@ convincing Houdini setups", then rank the actual obstacles:
 Obstacles 1 and 3 have since been addressed: `viewport_frame_node`
 (deterministic framing) and `render_snapshot` (a lit PNG the agent can
 actually read) both shipped 2026-08-12. Unattended iteration that never
-touches the owner's session still depends on the headless worker
-(`HMCP_HEADLESS_WORKER_PLAN.md`), which has not shipped.
+touches the owner's session still depends on the headless worker, which has
+not shipped (`../HMCP_DESIGN.md` section 7).
 
 **Therefore: the highest-leverage work is not the cookbook, and it is already
 written down.**
@@ -687,7 +687,6 @@ Read before implementing:
 
 - `houdini/docs/HMCP_DESIGN.md` — doctrine, safety model, decision log
 - `houdini/docs/HMCP_HOUDINI_NOTES.md` — measured API facts and failure modes
-- `houdini/docs/plans/HMCP_HEADLESS_WORKER_PLAN.md` — unattended iteration
 - `houdini/commands_spec.py` — the commands that exist; note the absence of frame control
 - `houdini/references/frozen_cave/NOTES.md` — the precedent §3.6 builds on
 - `scripts/dump_scene.py` — the seed of `hip_to_recipe.py` (§4.2 A2)

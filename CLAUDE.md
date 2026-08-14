@@ -42,7 +42,49 @@ Three genres of document, and only one of them lives forever:
 A non-empty `plans/` means there is open work. That is the whole point of the
 folder — "should this still exist?" answerable at a glance.
 
-**When a plan closes, harvest it, then delete it.** Fixed addresses:
+### While a plan is alive — this is what keeps the cleanup cheap
+
+A closed plan should be nearly worthless by the time it closes. If harvesting
+one turns out to be real work, facts were filed in the wrong place *while the
+work was happening*. Four rules prevent that:
+
+1. **A discovered fact is born in its permanent home, not in the plan.** When
+   a probe answers something — a real parm name, an API that behaves against
+   its documentation, a measured timing — write it into the notes doc *then*,
+   and have the plan link to it. Never `> **Answer:**` blocks accumulating
+   inside the plan; that is exactly what makes a finished plan undeletable.
+2. **A decision is born in the design doc's decision log**, dated, with its
+   reason. The plan cites it. Two plans needing the same decision is the
+   signal it belongs there, not the signal to copy it.
+3. **Plans cite reference docs, never other plans.** Cross-citation between
+   plans builds a web where deleting any one of them breaks the rest.
+4. **A plan holds only ordering, scope and open questions** — what to do in
+   what order, what is deliberately out, what is still unknown. Everything
+   durable it discovers moves out as it is discovered.
+
+A subagent's finished research still gets written to a file rather than left
+in chat — but it lands in `plans/` and inherits this lifecycle. Its durable
+findings are split out to the notes/design docs on the first read-through
+with the user, not saved up for the end. What remains is a plan.
+
+### Partial harvest — the normal case
+
+Most plans land in stages, so harvest per stage, at the same moment the
+`BACKLOG.md` line is written. That is one habit, not two: the stage is done →
+its durable facts and decisions are filed → one Done line → the stage's
+section in the plan collapses to a status line, not a kept transcript.
+
+When the last stage closes, deleting the plan should be a formality. A plan
+whose stages are all closed but which still holds unfiled content is
+overdue — harvest it then, not "later".
+
+A plan that gets abandoned rather than finished is deleted the same way: what
+was learned goes to the notes doc, why it was dropped goes to the decision
+log, and the commit body carries the rest.
+
+### When a plan closes
+
+**Harvest it, then delete it.** Fixed addresses:
 
 - how it works now → the reference doc / `README.md`, **edited in place**
 - why it's this way, don't undo it → the decision log in the stack's design
