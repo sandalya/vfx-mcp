@@ -194,6 +194,55 @@ and strictly more general.
 
 ---
 
+## Node-network authoring: compiled for-each expressions
+
+Confirmed 2026-08-14 on a production scene (`x12_travel_case`), not the
+`hmcp` plugin itself — kept here because there is no better-fitting
+Houdini-stack notes doc for artist-facing node-graph technique.
+
+A manual compiled for-each loop (`block_begin` / `block_end` SOPs, not the
+packaged "for-each" HDA) needs `iteration`/`numiterations` read a specific
+way from a parameter expression on a node **inside** the loop body:
+
+- **Don't `detail("../some_node", "iteration")` by raw op-path** on a node
+  that is itself between `block_begin` and `block_end`. Two distinct
+  failure modes hit trying this:
+  1. Referencing a *second, disconnected* `block_begin` (method=`metadata`,
+     `blockpath=../foreach_end1`, meant for external/post-loop queries)
+     creates a circular cook dependency when the querying node is itself
+     upstream of that same `foreach_end1` — silently evaluates to `0`, no
+     error surfaced.
+  2. Referencing the loop's own driving `block_begin` (method=`input`) by
+     raw path throws `Unable to evaluate expression (Bad data type for
+     function or operation)` — a compiled block duplicates itself per
+     iteration, and a bare path string doesn't resolve to the right
+     per-iteration instance.
+- **Working pattern: type the target node's path into the expression, let
+  Houdini auto-convert it to a spare input, then reference it by negative
+  index.** Typing `detail("../foreach_count1", "iteration", 0)` into a parm
+  and confirming it makes Houdini silently create a `spare_input0` parm
+  (visible via `get_node_info`, holds the literal path) and rewrite the
+  expression to `detail(-1, "iteration", 0)`. The spare input wires the
+  dependency into the DAG explicitly, resolving both failure modes above —
+  confirmed working even referencing the metadata-method `block_begin` from
+  case 1, once it's a spare input rather than a bare path.
+- **Normalize sweep expressions against `numiterations`, don't bake a fixed
+  per-step increment.** `angle_per_step * detail(-1,"iteration",0)` only
+  hits the intended max angle for the one iteration count it was tuned
+  against — changing "Iterations" on the `block_end` silently
+  stretches/shrinks the whole range. Pin the endpoints instead and let
+  iteration count only change the density between them:
+  ```
+  end_angle * detail(-1,"iteration",0) / (detail(-1,"numiterations",0)-1)
+  ```
+  (add `start_angle +` and use `(end-start)` if the range doesn't start at
+  0). General pattern for a swept-volume/motion-envelope shape — e.g.
+  sweeping a camera housing through its gimbal tilt range to carve a lid
+  clearance pocket — where `numiterations` should read as "quality" of the
+  merged result, independent of the physical range being swept.
+
+---
+
 ## Undo
 
 `hou.undos` has **no public undo-stack position or revision counter.** The

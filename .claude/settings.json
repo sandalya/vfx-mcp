@@ -54,6 +54,19 @@
           }
         ]
       }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "input=$(cat); fp=$(printf '%s' \"$input\" | grep -o '\"file_path\"[^,}]*'); case \"$fp\" in *.claude*memory*) printf '%s' '{\"hookSpecificOutput\": {\"hookEventName\": \"PostToolUse\", \"additionalContext\": \"This Write/Edit targets the Claude memory store (outside the repo, under .claude/.../memory/). Before moving on: is this project-specific technical reference material (pipeline/API facts, node-graph techniques, measured gotchas -- anything Sashok would want to browse, version, or point a teammate at) rather than cross-session behavioral context (who he is, standing preferences, project status)? If it is reference material, per CLAUDE.md Document lifecycle and feedback_project_docs_in_repo.md it belongs in the repo (the stack docs/*_NOTES.md, or docs/), with only a short reference-type pointer left in memory.\"}}' ;; esac",
+            "timeout": 10,
+            "statusMessage": "Checking memory-store write destination"
+          }
+        ]
+      }
     ]
   }
 }
