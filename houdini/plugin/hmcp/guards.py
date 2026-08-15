@@ -135,6 +135,23 @@ def require_bootstrap_scene():
 
 
 # ---------------------------------------------------------------------------
+# Frame control
+# ---------------------------------------------------------------------------
+
+# set_frame is the narrow, composable primitive that exists instead of the
+# "multi-frame / sequence rendering" capability HMCP_DESIGN.md's never-list
+# refuses outright: it only moves hou.frame(), it never renders or captures
+# anything itself. The bound exists for the same reason as that refusal --
+# a frame-cached SOP solver (Vellum etc.) cooks every intermediate frame to
+# reach the one requested, so an unbounded jump is the same "runs forever,
+# freezes Houdini, blows every timeout" risk class, just triggered through
+# time instead of through a render's frame range. Not tied to any one
+# scene's $FEND -- a flat constant so the bound can't be widened by opening
+# a scene with a longer frame range.
+MAX_FRAME = 500
+
+
+# ---------------------------------------------------------------------------
 # Parameter whitelists
 # ---------------------------------------------------------------------------
 

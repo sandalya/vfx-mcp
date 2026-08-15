@@ -577,6 +577,41 @@ def viewport_dolly(factor):
 
 
 # ---------------------------------------------------------------------------
+# Frame control
+# ---------------------------------------------------------------------------
+
+
+def set_frame(frame):
+    """Move Houdini's current frame (hou.setFrame) so the next
+    get_geometry_info / viewport_snapshot call reflects that frame's
+    cooked state -- the only way to inspect a frame-cached SOP solver
+    (e.g. a Vellum sim) at a frame other than 1 through this bridge, since
+    no timeline/playback control exists otherwise.
+
+    Bounded to [0, guards.MAX_FRAME] (see its docstring for why: a
+    frame-cached solver cooks every intermediate frame to reach the one
+    requested, so an unbounded jump is the same "runs forever" risk class
+    HMCP_DESIGN.md's never-list already refuses for multi-frame
+    rendering). This command is the narrower primitive instead -- it only
+    moves time, it never renders or captures anything itself. Caller
+    should step a heavy solver forward in small increments and check
+    get_node_errors / get_geometry_info between calls rather than jumping
+    straight to a high frame on the first call."""
+    guards.require_sandbox_scene()
+    import hou
+
+    if not (0 <= frame <= guards.MAX_FRAME):
+        raise ValueError(
+            f"Refused: frame must be between 0 and {guards.MAX_FRAME}, got {frame!r}."
+        )
+
+    with hou.undos.group("MCP: set_frame"):
+        hou.setFrame(frame)
+
+    return {"frame": hou.frame()}
+
+
+# ---------------------------------------------------------------------------
 # VEX authoring
 # ---------------------------------------------------------------------------
 

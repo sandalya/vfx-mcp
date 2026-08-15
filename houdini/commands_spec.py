@@ -364,6 +364,25 @@ COMMANDS = [
             "component at a time."
         ),
     },
+    # Frame control: the narrow, composable primitive that exists instead
+    # of "multi-frame / sequence rendering" (refused outright elsewhere in
+    # this list, see HMCP_DESIGN.md's never-list) -- it only moves time,
+    # it never renders or captures anything by itself.
+    {
+        "name": "set_frame",
+        "kind": "write",
+        "params": {"frame": "int"},
+        "doc": (
+            "Move Houdini's current frame (hou.setFrame) so the next "
+            "get_geometry_info/viewport_snapshot call reflects that "
+            "frame's cooked state -- the only way to inspect a "
+            "frame-cached SOP solver (e.g. Vellum) at a frame other than "
+            "1. Bounded to [0, guards.MAX_FRAME]. Does not render or "
+            "capture anything itself -- pair with viewport_snapshot or "
+            "get_geometry_info. Step a heavy solver forward in small "
+            "increments rather than jumping straight to a high frame."
+        ),
+    },
 ]
 
 COMMAND_NAMES = {c["name"] for c in COMMANDS}

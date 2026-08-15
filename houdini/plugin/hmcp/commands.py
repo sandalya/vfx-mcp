@@ -61,6 +61,8 @@ _HANDLERS = {
     "sync_vex_parms": build.sync_vex_parms,
     # Parameter interface.
     "promote_parm": build.promote_parm,
+    # Frame control.
+    "set_frame": build.set_frame,
 }
 
 

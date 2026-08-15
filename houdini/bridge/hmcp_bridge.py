@@ -499,6 +499,28 @@ def promote_parm(
     return _call("promote_parm", params)
 
 
+# -------------------------------------------------------------------
+# Frame control: the narrow primitive that exists instead of multi-frame/
+# sequence rendering (refused outright elsewhere -- see HMCP_DESIGN.md's
+# never-list). It only moves hou.frame(); it never renders or captures
+# anything by itself.
+# -------------------------------------------------------------------
+
+@mcp.tool()
+def set_frame(ctx: Context, frame: int) -> str:
+    """Move Houdini's current frame so the next get_geometry_info or
+    viewport_snapshot call reflects that frame's cooked state -- the only
+    way to inspect a frame-cached SOP solver (e.g. a Vellum sim) at a
+    frame other than 1, since no timeline/playback control exists
+    otherwise. Bounded to [0, 500]. Does not render or capture anything
+    itself -- call viewport_snapshot or get_geometry_info afterward to
+    actually look. Step a heavy solver forward in small increments (e.g.
+    +10-20 at a time) and check get_node_errors between calls rather than
+    jumping straight to a high frame on the first call. Requires a
+    sandbox scene."""
+    return _call("set_frame", {"frame": frame})
+
+
 def main():
     mcp.run()
 
@@ -526,6 +548,8 @@ if __name__ == "__main__":
         "sync_vex_parms",
         # Parameter interface
         "promote_parm",
+        # Frame control
+        "set_frame",
     }
     if _bridge_tool_names != commands_spec.COMMAND_NAMES:
         missing_in_bridge = commands_spec.COMMAND_NAMES - _bridge_tool_names
