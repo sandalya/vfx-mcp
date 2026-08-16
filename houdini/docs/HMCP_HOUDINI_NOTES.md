@@ -243,6 +243,61 @@ way from a parameter expression on a node **inside** the loop body:
 
 ---
 
+## Boolean SOP + CAD-tessellated input: T-junction diagnosis and fix
+
+Confirmed 2026-08-16 on a production scene (`x12_travel_case`, `boolean41`).
+General artist-facing technique, kept here for the same reason as the
+for-each notes above.
+
+**Symptom:** `boolean::2.0` cooks with no errors, one `Crossed boundary
+(unshared) edges in solid A` warning naming three point numbers — but the
+actual output is visibly broken: flat, backfacing (inconsistent-normal)
+garbage shards disconnected from the main solid. One residual non-manifold
+edge is enough to corrupt the solid classification for a whole connected
+shell region, not just a local dimple — don't dismiss a single warning as
+cosmetic on a Boolean SOP. Confirm with `viewport_snapshot`, not just
+`get_node_errors` — the warning count and the visual correctness are not the
+same signal.
+
+**What does *not* fix it, both tried and measured worse or no-op:**
+- **`Fuse` cannot close a T-junction at any tolerance.** A T-junction is a
+  vertex from a finer patch sitting on the *middle* of an edge from a
+  coarser patch — there is no matching point to snap to. Raising `tol3d`
+  from the default 0.001 up to 0.02 (20×) on this mesh left the exact same
+  single warning every time. (Fuse *is* still needed first, though — on this
+  mesh it correctly collapsed 845k points to 194k real coincident-point
+  duplicates from independent CAD tessellation; it just can't touch the last
+  T-junction.)
+- **`PolyDoctor` in repair mode made this specific mesh worse, not better.**
+  Defaults (`illformed`/`manyedges`/`nonconvex`/`overlapping` = repair) plus
+  `intersect` = repair introduced *new* warning categories on the Boolean
+  output that weren't there before (`Inconsistent incident polygon winding
+  across edges`, additional `Nonmanifold edges`) — going from one warning to
+  hundreds. Not a universal fix; don't reach for it by default on
+  independently-tessellated CAD import.
+
+**What worked — point-level surgery, not a blanket tool:**
+1. `Group` SOP, `entity=point`, `pattern="<the exact point numbers Boolean's
+   warning named>"` — selects just the defect.
+2. `grouppromote`, 3 chained promotions in one node (points→prims, using
+   `fromtype`/`totype`/`group`/`newname` per numbered promotion): points→prims
+   (touching prims) → prims→points (dilate) → points→prims again. One ring of
+   dilation is what turns the immediate defect into a hole with a *simple*
+   closed boundary loop — filling the undilated hole directly can leave a
+   non-simple boundary.
+3. `Blast` on that ring group — deletes only the local patch (tens of prims
+   out of 200k+), not a blanket repair pass.
+4. `PolyFill` to cap the resulting hole — see the fillmode gotcha below.
+5. Feed back into the Boolean's input. Re-check with both `get_node_errors`
+   (should drop to zero) and a fresh `viewport_snapshot` (the visual garbage
+   should be gone, not just the warning text).
+
+This is a completely different failure class from the "compiled for-each"
+section below — no VDB conversion needed, and precision CAD topology is
+fully preserved since only the actually-broken prims are touched.
+
+---
+
 ## Vellum SOP solver (`vellumsolver`) — five silent failure modes
 
 Found 2026-08-15 building a pressure-inflated cloth pillow
@@ -363,6 +418,52 @@ cannot be closed short of attaching a debugger. The only reliable fix is a
 full Houdini restart. If a reload session starts timing out or getting
 refused, run `netstat -ano | findstr :9878` and count the `LISTENING` lines
 before suspecting the code.
+
+### `layout_children(parent_path)` lays out the *entire* network, not just agent-created nodes
+
+Confirmed 2026-08-16. There is no scoping to "nodes this session created" —
+it repositions every child under `parent_path`. Calling it on a shared
+network (e.g. `/obj/geo1` in a real production scene) silently discards
+whatever manual layout the owner had. There is no undo exposed through the
+bridge for this; the only recovery is the owner's own Ctrl+Z in Houdini's
+interactive undo stack (works because HOM writes go through Houdini's normal
+undo system), which is not guaranteed and is not an hmcp capability.
+
+**Never call `layout_children` on a parent that holds pre-existing work.**
+Reposition only the specific nodes the current session created, individually,
+via `set_position`.
+
+### `get_node_type_parms` / `get_node_help` take `type_name`, not `node_type`
+
+Every write/inspect command that creates or targets a node instance
+(`create_node`, `list_node_types`) takes `node_type`. These two
+introspection-only commands take `type_name` (plus `category`) instead —
+passing `node_type` to either raises a pydantic "field required" error before
+the call even reaches Houdini. Worth checking parameter names against the
+tool schema before assuming consistency across the bridge surface.
+
+### `polyfill` SOP `fillmode` — real menu tokens, don't guess
+
+Confirmed live via `get_node_type_parms` after several guessed tokens
+(`polygon`, `triangle`, `poly`, `fan`, `subdivide`, `polypatch`) all failed
+with `Invalid menu item`. The real values: `none, tris, trifan, quadfan,
+quads, gridquads` — default is `quads`. `quads` requires each boundary loop
+to have an even edge count and **silently skips** (warning, not error) any
+loop that doesn't — which a T-junction-shaped hole always produces (see the
+Boolean section above). `tris` (triangle fan) fills any simple closed loop
+regardless of parity and is the reliable choice for an irregular
+hand-selected hole.
+
+### A non-sandbox write is not automatically a bug — check for D9 opt-in first
+
+Write commands (`set_parm`, `create_node`, `connect_nodes`, viewport/render
+tools) succeeded without refusal on `Y:/3dPrints/x12_travel_case/...`, a
+path well outside `SANDBOX_ROOT`. This is not a gap in `require_sandbox_scene()`
+— see `HMCP_DESIGN.md` D9: a scene outside the sandbox can be opted in with a
+`hmcp = 1` scene variable, and this production scene already had it set from
+earlier work. Before treating a non-sandbox write succeeding as a safety
+finding, check the open scene's `hmcp` variable rather than assuming the
+guard is silently broken.
 
 ### The plugin serves one client at a time
 
