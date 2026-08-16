@@ -243,6 +243,96 @@ way from a parameter expression on a node **inside** the loop body:
 
 ---
 
+## Vellum SOP solver (`vellumsolver`) — five silent failure modes
+
+Found 2026-08-15 building a pressure-inflated cloth pillow
+(`/obj/ice_scale_pattern`, sandbox scene). All five cook "cleanly" in some
+sense — no errors, or errors that look unrelated to the real cause — which is
+what makes them expensive to find. Working end state: `box` → `subdivide`
+(catmull-clark, not bilinear — bilinear keeps sharp box corners even after
+many iterations) → `vellumconstraints`(cloth only, no pressure) →
+`vellumsolver` → null, gravity small, `useground` on, `doselfcollisions` off,
+`veldamping` > 0.
+
+1. **Zero net external force means zero motion, even with unsatisfied
+   constraints.** With `gravity` and wind both zeroed, the solver's output
+   bounding box stayed bit-identical to the pre-sim rest box (`±0.5` on every
+   axis, to the last float) from frame 1 through frame 200, despite the
+   constraints visibly existing (guide geometry, see #3) and their rest-length
+   targets being nowhere near 1.0. The constraint-projection step apparently
+   never runs at all without some nonzero external acceleration to seed it.
+   A small gravity (`-0.5`, well under the real-world `-9.8` default) was
+   enough to "wake" the solver and let the constraints actually shape the
+   mesh.
+2. **Self-collision explodes on any external force, silently.** The moment
+   real gravity was reintroduced with `doselfcollisions` on, the mesh
+   degenerated into a spiky, self-intersecting mess within 10 frames (bbox
+   ballooning from `±0.5` to roughly `±4.5`) — no cook error, it just cooks
+   garbage. `doselfcollisions` off fixes it outright. Likely why a
+   from-scratch build might zero gravity in the first place (mode 1) — it
+   silences the explosion without curing it.
+3. **The `pressure` constraint type can be completely inert while looking
+   fine.** Wiring a channel into `stretchrestscale` (correct — Houdini
+   reuses this same parm as the volume-scale target for `constrainttype:
+   pressure`, the per-type relabeling doesn't show up via the API) and
+   confirming guide geometry exists is not enough evidence it's doing
+   anything. Proof it wasn't: bypassing the pressure `vellumconstraints`
+   node entirely from the graph produced a **bit-identical** result to
+   including it: tried targets 1.35, 1.6, and 5.0 (500% volume) and all
+   three converged to the exact same floats. Root cause not found — not a
+   cache issue (see #4, ruled out independently) and not a wiring issue (the
+   node's own `get_node_info` showed the resolved numeric value updating
+   correctly). Do not trust "guide geometry shows something" as proof a
+   constraint type is contributing force; it may just be showing the
+   upstream cloth constraint's own guide passing through. If a pressure/
+   balloon look is needed, don't fight this — use a collision proxy instead
+   (a smaller closed mesh as static collision geometry, cloth stretch-scale
+   under 1.0 shrink-wraps taut against it), though see #5 for a caveat on
+   that path.
+4. **The solver's internal DOP cache can wedge itself permanently, on a
+   per-node-instance basis, independent of the SOP-level `Cache Enabled`
+   toggle.** After enough live rewiring of a `vellumsolver`'s inputs (input
+   swapped between different upstream `vellumconstraints` nodes and back,
+   repeatedly, while iterating), it started throwing `Error: The number of
+   points in the geometry and constraints do not match` from deep inside its
+   compiled subnetwork (`dopimport_geometry/.../graph_color_constraints`) —
+   despite every upstream node reporting correct, matching point counts via
+   `get_geometry_info`. None of the following cleared it: toggling `Cache
+   Enabled` off, pressing `Reset Simulation` (including a deliberate 0→1
+   edge, in case a same-value `.set()` doesn't fire the button callback),
+   toggling `bypass` on the solver itself, toggling `bypass` on its upstream
+   `vellumconstraints`. **A brand new `vellumsolver` node fed by the exact
+   same upstream reproduced the identical error** — proving it wasn't a
+   per-node cache at all but corrupted state living in the upstream
+   `vellumconstraints`' output despite that node itself reporting zero
+   errors and correct topology. The only fix found: rebuild the constraint
+   chain from a fresh `box`/`subdivide`/`vellumconstraints` too, not just a
+   fresh solver. Lesson: if a solver error mentions internal DOP subnetwork
+   paths and every visible geometry check looks fine, don't trust
+   `get_node_errors`/`get_geometry_info` on the upstream nodes as proof
+   they're clean — rebuild the chain from further back before spending more
+   time on cache-clearing tricks.
+5. **Zero velocity damping lets a resting shape degrade over time instead of
+   settling.** A cloth+ground sim that looked like a genuinely nice rounded
+   cushion at frame 30 had collapsed into a spiky, jagged mess by frame 60 —
+   same settings, just later frames, no errors either time. `veldamping`
+   was `0` (the solver's own default). Setting it to `0.3` made the
+   identical setup hold a stable, fully-rounded resting shape from frame 30
+   through at least frame 100. A shape that looks right at one frame is not
+   confirmation of a stable sim — check a frame well past where it "should"
+   have settled before trusting the result.
+
+**Diagnostic technique that found both:** `vellumconstraints` node output
+(`get_geometry_info`) reports the *same* `npoints`/`nprims` as its input —
+the constraint edges/volume constraint are not visible as extra primitives
+in the schema query at all. To confirm constraints actually exist, set the
+node's own display flag on temporarily (`set_display_flag`) and take a
+`viewport_snapshot` — the guide geometry (constraint lines) only renders
+when the node carries the display flag, and shows up as a dense tangle of
+white lines over the base mesh when constraints are present.
+
+---
+
 ## Undo
 
 `hou.undos` has **no public undo-stack position or revision counter.** The
