@@ -363,6 +363,34 @@ recommended quasistatic + pressure recipe): `git show
 725a6c4:houdini/docs/plans/HMCP_VELLUM_PILLOW_RESEARCH.md` — the plan doc
 itself is deleted post-harvest per the repo's document lifecycle rule.
 
+**Once the wire was fixed, the cube inflated into a perfect sphere, not a
+cushion — two more root causes, both silent:**
+
+- **`vellumconstraints`' Stretch Stiffness defaults to `1.0 × 10^0` — far too
+  soft to resist a pressure target, regardless of `stretchrestscale`.** The
+  Vellum stiffness UI is a mantissa (`stretchstiffness`, default `1.0`) times
+  a menu-selected power of ten (`stretchstiffnessexp`, default token `"0"`,
+  i.e. ×1). At that default the cloth has almost no resistance to stretching,
+  so any pressure inflation just blows the mesh out to whatever shape
+  minimizes surface energy for the target volume — a sphere — no matter how
+  taut `stretchrestscale` claims to make it. Raising `stretchstiffnessexp` to
+  `"4"` (×10⁴, still "low" by Vellum's own standards per the shelf-tool docs)
+  fixed it. `bendstiffnessexp` is the same mantissa/exponent-menu pattern.
+- **A coarse control cage under a high subdivision depth rounds the *rest
+  shape itself* into a near-sphere before the solver ever runs.** The box
+  started at 2 divisions/axis (a 3×3 point grid per face) into `subdivide`
+  at depth 4 (Catmull-Clark). A closed manifold box has no boundary loops, so
+  none of `vtxboundary`'s corner-pinning options apply — CC subdivision on a
+  cage that coarse converges almost all the way to its analytic limit
+  surface, which for a low-poly cube is close to a sphere, well before depth
+  4. The un-solved, un-pressurized geometry was already round. Fix: raise
+  the source resolution (6 divisions/axis) and drop subdivide depth to 2 —
+  enough points survive between corners that a couple of CC passes only
+  rounds the edges, leaving recognizable flat-ish faces (the actual "pillow"
+  silhouette). Check the **pre-solve** geometry's shape, not just its bbox,
+  before blaming the solver for an overly round result — the rest shape can
+  already be wrong.
+
 ---
 
 ## Undo
