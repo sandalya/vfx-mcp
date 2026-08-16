@@ -200,6 +200,14 @@ Houdini's main thread for several seconds (6.5–16.6s measured) and a
 silently-aborted render leaves `rop.errors()` empty. Both are documented
 limitations, and both are the argument for the deferred headless worker.
 
+**D13 — `connect_nodes` takes `output_index` (default 0) (2026-08-16).**
+Without it hmcp could only ever wire a node's output 0, which structurally
+blocked any multi-output node — most concretely `vellumconstraints`, whose
+constraint stream is output 1; see `HMCP_HOUDINI_NOTES.md`'s Vellum section
+for the failure modes this caused before the fix. Default stays 0 so every
+existing call is unaffected. *Reverting* silently breaks Vellum, Switch,
+Split and any other multi-output SOP wiring again.
+
 ---
 
 ## 6. Permanently out — the never-list

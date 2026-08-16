@@ -298,93 +298,70 @@ fully preserved since only the actually-broken prims are touched.
 
 ---
 
-## Vellum SOP solver (`vellumsolver`) — five silent failure modes
+## Vellum SOP solver (`vellumsolver`) — the missing constraint wire
 
 Found 2026-08-15 building a pressure-inflated cloth pillow
-(`/obj/ice_scale_pattern`, sandbox scene). All five cook "cleanly" in some
-sense — no errors, or errors that look unrelated to the real cause — which is
-what makes them expensive to find. Working end state: `box` → `subdivide`
-(catmull-clark, not bilinear — bilinear keeps sharp box corners even after
-many iterations) → `vellumconstraints`(cloth only, no pressure) →
-`vellumsolver` → null, gravity small, `useground` on, `doselfcollisions` off,
-`veldamping` > 0.
+(`/obj/ice_scale_pattern`, sandbox scene); root-caused and fixed 2026-08-16.
+`vellumsolver` is a **three-input SOP**: input 0 geometry, input 1
+**constraints** (from a `vellumconstraints` node's *second* output), input 2
+collision objects. `connect_nodes` had no `output_index` parameter, so it
+could only ever wire a node's output 0 — the constraint stream had no way to
+reach input 1 at all. Everything below that looked like five unrelated
+solver quirks was this one gap:
 
-1. **Zero net external force means zero motion, even with unsatisfied
-   constraints.** With `gravity` and wind both zeroed, the solver's output
-   bounding box stayed bit-identical to the pre-sim rest box (`±0.5` on every
-   axis, to the last float) from frame 1 through frame 200, despite the
-   constraints visibly existing (guide geometry, see #3) and their rest-length
-   targets being nowhere near 1.0. The constraint-projection step apparently
-   never runs at all without some nonzero external acceleration to seed it.
-   A small gravity (`-0.5`, well under the real-world `-9.8` default) was
-   enough to "wake" the solver and let the constraints actually shape the
-   mesh.
-2. **Self-collision explodes on any external force, silently.** The moment
-   real gravity was reintroduced with `doselfcollisions` on, the mesh
-   degenerated into a spiky, self-intersecting mess within 10 frames (bbox
-   ballooning from `±0.5` to roughly `±4.5`) — no cook error, it just cooks
-   garbage. `doselfcollisions` off fixes it outright. Likely why a
-   from-scratch build might zero gravity in the first place (mode 1) — it
-   silences the explosion without curing it.
-3. **The `pressure` constraint type can be completely inert while looking
-   fine.** Wiring a channel into `stretchrestscale` (correct — Houdini
-   reuses this same parm as the volume-scale target for `constrainttype:
-   pressure`, the per-type relabeling doesn't show up via the API) and
-   confirming guide geometry exists is not enough evidence it's doing
-   anything. Proof it wasn't: bypassing the pressure `vellumconstraints`
-   node entirely from the graph produced a **bit-identical** result to
-   including it: tried targets 1.35, 1.6, and 5.0 (500% volume) and all
-   three converged to the exact same floats. Root cause not found — not a
-   cache issue (see #4, ruled out independently) and not a wiring issue (the
-   node's own `get_node_info` showed the resolved numeric value updating
-   correctly). Do not trust "guide geometry shows something" as proof a
-   constraint type is contributing force; it may just be showing the
-   upstream cloth constraint's own guide passing through. If a pressure/
-   balloon look is needed, don't fight this — use a collision proxy instead
-   (a smaller closed mesh as static collision geometry, cloth stretch-scale
-   under 1.0 shrink-wraps taut against it), though see #5 for a caveat on
-   that path.
-4. **The solver's internal DOP cache can wedge itself permanently, on a
-   per-node-instance basis, independent of the SOP-level `Cache Enabled`
-   toggle.** After enough live rewiring of a `vellumsolver`'s inputs (input
-   swapped between different upstream `vellumconstraints` nodes and back,
-   repeatedly, while iterating), it started throwing `Error: The number of
-   points in the geometry and constraints do not match` from deep inside its
-   compiled subnetwork (`dopimport_geometry/.../graph_color_constraints`) —
-   despite every upstream node reporting correct, matching point counts via
-   `get_geometry_info`. None of the following cleared it: toggling `Cache
-   Enabled` off, pressing `Reset Simulation` (including a deliberate 0→1
-   edge, in case a same-value `.set()` doesn't fire the button callback),
-   toggling `bypass` on the solver itself, toggling `bypass` on its upstream
-   `vellumconstraints`. **A brand new `vellumsolver` node fed by the exact
-   same upstream reproduced the identical error** — proving it wasn't a
-   per-node cache at all but corrupted state living in the upstream
-   `vellumconstraints`' output despite that node itself reporting zero
-   errors and correct topology. The only fix found: rebuild the constraint
-   chain from a fresh `box`/`subdivide`/`vellumconstraints` too, not just a
-   fresh solver. Lesson: if a solver error mentions internal DOP subnetwork
-   paths and every visible geometry check looks fine, don't trust
-   `get_node_errors`/`get_geometry_info` on the upstream nodes as proof
-   they're clean — rebuild the chain from further back before spending more
-   time on cache-clearing tricks.
-5. **Zero velocity damping lets a resting shape degrade over time instead of
-   settling.** A cloth+ground sim that looked like a genuinely nice rounded
-   cushion at frame 30 had collapsed into a spiky, jagged mess by frame 60 —
-   same settings, just later frames, no errors either time. `veldamping`
-   was `0` (the solver's own default). Setting it to `0.3` made the
-   identical setup hold a stable, fully-rounded resting shape from frame 30
-   through at least frame 100. A shape that looks right at one frame is not
-   confirmation of a stable sim — check a frame well past where it "should"
-   have settled before trusting the result.
+- zero motion under zero gravity — no constraints to project, so nothing
+  moved regardless of external force
+- self-collisions exploding — an unconstrained point cloud with `pscale`
+  mutually repels; nothing was holding the sheet together
+- the `pressure` constraint type looking totally inert — its stream never
+  reached the solver, so no target value could have mattered
+- a `vellumsolver` throwing `number of points in the geometry and
+  constraints do not match` after rewiring — a straightforward
+  topology-mismatch assertion (input 1 and input 2 must have point
+  correspondence), not corrupted DOP cache state
+- a resting shape degrading between frame 30 and frame 60 — unconverged
+  projection accumulating residual energy with no real constraint to
+  converge toward
 
-**Diagnostic technique that found both:** `vellumconstraints` node output
-(`get_geometry_info`) reports the *same* `npoints`/`nprims` as its input —
-the constraint edges/volume constraint are not visible as extra primitives
-in the schema query at all. To confirm constraints actually exist, set the
-node's own display flag on temporarily (`set_display_flag`) and take a
-`viewport_snapshot` — the guide geometry (constraint lines) only renders
-when the node carries the display flag, and shows up as a dense tangle of
-white lines over the base mesh when constraints are present.
+Fixed 2026-08-16: `connect_nodes(from_path, to_path, input_index,
+output_index)` — `build.py`/`commands_spec.py`/`hmcp_bridge.py` all now
+carry `output_index` (default 0, so old calls are unaffected). Confirmed
+live: wiring a `vellumconstraints` chain's output 1 through to the solver's
+input 1 turned a cube into a taut, symmetric, rounded pressure-inflated
+pillow on the first cook — see `viewport_snapshot` from that session.
+
+**Two more things that were genuinely wrong, independent of the wire gap:**
+
+- **`stretchrestscale` (Rest Length Scale) does not affect Pressure
+  constraints — it only scales Distance/stretch constraints.** The pressure
+  volume target is the `restlength` **primitive** attribute on the
+  constraint primitive where `s@type == "pressure"` (that attribute *is* the
+  stored volume for that type; multiply it directly, e.g. in a Primitive
+  Wrangle running over the constraint stream:
+  `if (s@type == "pressure") f@restlength *= chf(...);`).
+- **Chaining two `vellumconstraints` nodes (e.g. cloth → pressure) requires
+  wiring *both* outputs to *both* inputs of the next node** (out0→in0,
+  out1→in1). A single wire (out0→in0 only) silently drops the first node's
+  constraints — the second node's constraint output then only contains its
+  own type, not the merged set.
+
+**Verification that actually proves a constraint type is being evaluated:**
+on the **solver's own output**, check for `pressuregradient`, `volumepts`,
+`volume` point attributes (Pressure) — SideFX documents these as populated
+"during constraint evaluation." Their absence is definitive proof that
+constraint type never reached the solver; their presence is definitive proof
+it did. Guide-geometry visibility and bounding-box-unchanged readings are
+**not** reliable evidence either way — the guide draws from the SOP's own
+internal constraint data regardless of what actually reached input 1, and
+`get_geometry_info` on a multi-output node (any `vellumconstraints`,
+`switch`, `split`, ...) only ever reports **output 0** — it cannot show
+what's on output 1 or later. To inspect a second output directly, wire it
+(now possible via `output_index`) to a `null` and query that.
+
+Full research trail (SideFX doc citations, falsification steps, the
+recommended quasistatic + pressure recipe): `git show
+725a6c4:houdini/docs/plans/HMCP_VELLUM_PILLOW_RESEARCH.md` — the plan doc
+itself is deleted post-harvest per the repo's document lifecycle rule.
 
 ---
 
