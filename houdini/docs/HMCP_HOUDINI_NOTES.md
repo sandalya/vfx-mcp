@@ -482,3 +482,42 @@ included — can never be accepted and will time out in `CLOSE_WAIT`.
 This is not the orphaned-listener bug above (one PID, one listener). Work
 around it by diffing the bridge's own live `describe_commands` response
 against `commands_spec.COMMAND_NAMES` instead of opening a second socket.
+
+---
+
+## Photoreal shading pass (2026-08-16) — three gotchas
+
+Building a Karma material + lighting pass for the Vellum pillow
+(`/obj/ice_scale_pattern`).
+
+- **Wireframe `viewport_snapshot` can look like the wrong shape when the
+  geometry is a flattened lens.** A correctly flattened, non-uniformly
+  scaled cushion rendered as pure unshaded wireframe from a 3/4 angle looked
+  exactly like a tall acorn/onion with a separate flat disc stuck to its
+  base — the far hemisphere's grid lines show through with no hidden-line
+  removal and read as a second lobe. A non-uniform `xform` scale cannot
+  introduce a new lobe (it's linear per-axis), so when a shape looks
+  topologically wrong right after a pure scale, get a **shaded**
+  `render_snapshot`, not another wireframe angle, before concluding the
+  geometry is actually broken.
+- **A large flat area light (`hlight` type `grid`) positioned close to a
+  large flat ground plane can self-occlude and cast a hard, sharp-edged
+  fake shadow wedge onto that same ground** — reproducible, and independent
+  of every light *parameter* (intensity, `shadow_type`, position all
+  changed, wedge persisted identically). Confirmed the ground plane itself
+  was the cause by deleting it: wedge gone. Don't chase this by tuning the
+  light; if a hard unexplained shadow tracks with camera moves but ignores
+  every light-side change, suspect the receiving geometry's own proximity
+  to the light card first.
+- **Materials for this Karma pipeline go through the classic `/mat` VOP
+  context, not Lop** — `Lop` isn't in `guards.ALLOWED_NODE_CATEGORIES`, so a
+  `materiallibrary` LOP is off the table. Build a `subnet` under `/mat`
+  containing `mtlxstandard_surface` → `mtlxsurfacematerial` → the subnet's
+  own `suboutput1`, then assign with a `material` SOP
+  (`shop_materialpath1` parm) upstream of the render-flagged node. The
+  `sceneimport`-based render pipeline (`/out/hmcp_render_karma/lopnet`)
+  picks this up automatically — no LOP-side material work needed. Vector
+  parms on MaterialX VOPs (`base_color`, `subsurface_color`, ...) are set
+  per-component through `set_parm` with an `r`/`g`/`b` suffix
+  (`base_colorr`, not `base_color`); light `areasize` similarly wants
+  `areasize1`/`areasize2`, not `areasizex`/`areasizey`.
