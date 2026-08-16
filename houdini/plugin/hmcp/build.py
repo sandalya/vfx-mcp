@@ -118,10 +118,15 @@ def create_node(parent_path, node_type, name=None):
     }
 
 
-def connect_nodes(from_path, to_path, input_index=0):
-    """Wire from_path's output into to_path's input_index-th input -- the
-    capability the old plugin advertised (connect_nodes) but never
-    actually implemented (see the rewrite plan's problem table)."""
+def connect_nodes(from_path, to_path, input_index=0, output_index=0):
+    """Wire from_path's output_index-th output into to_path's input_index-th
+    input -- the capability the old plugin advertised (connect_nodes) but
+    never actually implemented (see the rewrite plan's problem table).
+
+    output_index matters for any multi-output node: Vellum Constraints'
+    constraint geometry is output 1, not 0 -- wiring only output 0 into a
+    Vellum Solver builds a solver with no constraints, silently (see
+    docs/plans/HMCP_VELLUM_PILLOW_RESEARCH.md)."""
     guards.require_sandbox_scene()
     import hou
 
@@ -144,9 +149,14 @@ def connect_nodes(from_path, to_path, input_index=0):
         raise err
 
     with hou.undos.group("MCP: connect_nodes"):
-        to_node.setInput(input_index, from_node)
+        to_node.setInput(input_index, from_node, output_index)
 
-    return {"from": from_node.path(), "to": to_node.path(), "input_index": input_index}
+    return {
+        "from": from_node.path(),
+        "to": to_node.path(),
+        "input_index": input_index,
+        "output_index": output_index,
+    }
 
 
 def set_parm(node_path, parm_name, value):

@@ -277,9 +277,19 @@ def create_node(ctx: Context, parent_path: str, node_type: str, name: Optional[s
 
 
 @mcp.tool()
-def connect_nodes(ctx: Context, from_path: str, to_path: str, input_index: int = 0) -> str:
-    """Wire from_path's output into to_path's input_index-th input. Requires a sandbox scene."""
-    return _call("connect_nodes", {"from_path": from_path, "to_path": to_path, "input_index": input_index})
+def connect_nodes(ctx: Context, from_path: str, to_path: str, input_index: int = 0, output_index: int = 0) -> str:
+    """Wire from_path's output_index-th output into to_path's input_index-th input.
+    Needed for multi-output nodes (e.g. Vellum Constraints' constraint stream is
+    output 1). Requires a sandbox scene."""
+    return _call(
+        "connect_nodes",
+        {
+            "from_path": from_path,
+            "to_path": to_path,
+            "input_index": input_index,
+            "output_index": output_index,
+        },
+    )
 
 
 @mcp.tool()

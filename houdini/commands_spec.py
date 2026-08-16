@@ -138,8 +138,14 @@ COMMANDS = [
             "from_path": "str",
             "to_path": "str",
             "input_index": "int = 0",
+            "output_index": "int = 0",
         },
-        "doc": "Wire from_path's output into to_path's input_index-th input.",
+        "doc": (
+            "Wire from_path's output_index-th output into to_path's "
+            "input_index-th input. Needed for any multi-output node "
+            "(Vellum Constraints' constraint stream is output 1, Switch, "
+            "Split, etc.) -- output_index defaults to 0."
+        ),
     },
     {
         "name": "set_parm",
