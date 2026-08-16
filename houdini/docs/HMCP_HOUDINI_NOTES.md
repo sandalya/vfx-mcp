@@ -521,3 +521,40 @@ Building a Karma material + lighting pass for the Vellum pillow
   per-component through `set_parm` with an `r`/`g`/`b` suffix
   (`base_colorr`, not `base_color`); light `areasize` similarly wants
   `areasize1`/`areasize2`, not `areasizex`/`areasizey`.
+
+### Next step, not yet applied: art-directed wrinkles via `restlength`, not noise
+
+The `detail_wrangle` micro-wrinkles in the pass above are a post-solve `@P`
+noise hack (real geometry, but the solver never sees or reacts to it — it's
+applied after `pillow_solver`). Sashok pointed at the actually-correct
+Vellum technique (reference screenshot, 2026-08-16): scale the **stretch
+constraint's rest length** with a painted mask, so the *solver itself*
+buckles the cloth into wrinkles under real constraint relaxation instead of
+faking displacement afterward. Pattern, off a `vellumcloth` node's
+constraint output:
+
+```
+paint/generate a 0-1 "mask" attribute on the geometry (1 = stays relaxed,
+0 = should wrinkle/compress) → promote it onto the constraint primitives →
+a Primitive Wrangle on the constraint stream:
+
+f@restlength = f@restlengthorig * fit01(f@mask, ch("Bg"), ch("Fg"));
+```
+
+`restlengthorig` (not `restlength`) is the read source — always scale from
+the pristine original, never the current value, or repeated evaluations
+compound. `Bg`/`Fg` (spare floats, e.g. 0.5/1.5 in the reference) are the
+compress/relax bounds `fit01` remaps the mask into: mask 0 → rest length
+×`Bg` (shorter than the actual distance → the constraint fights to pull
+that edge in → buckling), mask 1 → ×`Fg` (longer/slack → stays flat). This
+is the same `restlength`-is-the-real-target fact as the pressure constraint
+finding above, applied to stretch instead of volume.
+
+Blocked on resolution: this needs a much denser mesh than the current 6
+divisions/axis box to read as fine fabric wrinkling rather than a few big
+buckles — raise `cloth_resolution`'s subdivide depth (or the box's own
+divisions) substantially before attempting this, and expect the solve to
+get noticeably slower per iteration. Where to paint/generate the mask for
+this pillow (no by-hand paint tool over MCP) is still open — most likely a
+proximity-to-rim computation like `detail_wrangle`'s existing normal-based
+mask, feeding `fit01` instead of driving `@P` directly.
