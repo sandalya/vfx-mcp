@@ -41,15 +41,19 @@ NUKE_FILES=("nuke_mcp_plugin.py")
 
 # little_helpers/ is its own repo (github.com/sandalya/little_helpers) as of
 # the Phase 0 restructuring -- checked out as a sibling directory next to
-# this repo, not inside it.
+# this repo, not inside it. As of that repo's 2026-08-20 restructure
+# ("Restructure repo root: package moves into little_helpers/, add
+# menu.py"), the repo root itself just holds menu.py + docs -- the actual
+# importable package lives one level down, at little_helpers/little_helpers/.
 LITTLE_HELPERS_REPO_DIR="$(cd "$REPO_ROOT/.." && pwd)/little_helpers"
-NUKE_LITTLE_HELPERS_LOCAL_DIR="$LITTLE_HELPERS_REPO_DIR"
+LITTLE_HELPERS_PKG_DIR="$LITTLE_HELPERS_REPO_DIR/little_helpers"
+NUKE_LITTLE_HELPERS_LOCAL_DIR="$LITTLE_HELPERS_PKG_DIR"
 NUKE_LITTLE_HELPERS_REMOTE_DIR='C:/Users/Admin/.nuke/little_helpers'
 
-NUKE_LITTLE_HELPERS_SPLIT_LAYERS_LOCAL_DIR="$LITTLE_HELPERS_REPO_DIR/split_layers"
+NUKE_LITTLE_HELPERS_SPLIT_LAYERS_LOCAL_DIR="$LITTLE_HELPERS_PKG_DIR/split_layers"
 NUKE_LITTLE_HELPERS_SPLIT_LAYERS_REMOTE_DIR='C:/Users/Admin/.nuke/little_helpers/split_layers'
 
-NUKE_LITTLE_HELPERS_VERITER_LOCAL_DIR="$LITTLE_HELPERS_REPO_DIR/veriter"
+NUKE_LITTLE_HELPERS_VERITER_LOCAL_DIR="$LITTLE_HELPERS_PKG_DIR/veriter"
 NUKE_LITTLE_HELPERS_VERITER_REMOTE_DIR='C:/Users/Admin/.nuke/little_helpers/veriter'
 
 TARGET="${1:-}"
