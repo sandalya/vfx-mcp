@@ -296,8 +296,6 @@ This is a completely different failure class from the "compiled for-each"
 section below — no VDB conversion needed, and precision CAD topology is
 fully preserved since only the actually-broken prims are touched.
 
----
-
 ## Vellum SOP solver (`vellumsolver`) — the missing constraint wire
 
 Found 2026-08-15 building a pressure-inflated cloth pillow
@@ -522,39 +520,82 @@ Building a Karma material + lighting pass for the Vellum pillow
   (`base_colorr`, not `base_color`); light `areasize` similarly wants
   `areasize1`/`areasize2`, not `areasizex`/`areasizey`.
 
-### Next step, not yet applied: art-directed wrinkles via `restlength`, not noise
+### Art-directed wrinkles via `restlength`, not noise
 
-The `detail_wrangle` micro-wrinkles in the pass above are a post-solve `@P`
-noise hack (real geometry, but the solver never sees or reacts to it — it's
-applied after `pillow_solver`). Sashok pointed at the actually-correct
-Vellum technique (reference screenshot, 2026-08-16): scale the **stretch
-constraint's rest length** with a painted mask, so the *solver itself*
-buckles the cloth into wrinkles under real constraint relaxation instead of
-faking displacement afterward. Pattern, off a `vellumcloth` node's
-constraint output:
+Reference photo (Sashok, 2026-08-16) saved at
+`houdini/docs/references/pillow_reference.png` — two stacked white pillows,
+soft rounded-rectangular cushion silhouette, fine irregular fabric
+wrinkling concentrated near the seams/rim, flat elsewhere.
+
+Superseded the `detail_wrangle` post-solve `@P` noise hack (real geometry,
+but the solver never saw or reacted to it) with the actually-correct Vellum
+technique: scale the **stretch constraint's rest length** with a mask, so
+the *solver itself* buckles the cloth under real constraint relaxation.
+Live on `/obj/ice_scale_pattern`:
 
 ```
-paint/generate a 0-1 "mask" attribute on the geometry (1 = stays relaxed,
-0 = should wrinkle/compress) → promote it onto the constraint primitives →
-a Primitive Wrangle on the constraint stream:
-
-f@restlength = f@restlengthorig * fit01(f@mask, ch("Bg"), ch("Fg"));
+box1 (divrate1/2/3 raised 6 → 18, resolution knob — dodivs is off, so
+      divsx/y/z are dead parms; divrate is the real one)
+  → cloth_resolution (subdivide, depth unchanged at 2 — raising this
+      instead of box divisions re-rounds the box into a sphere, see the
+      sphere-not-cushion fix above)
+  → rest_normal (Normal SOP — box has no @N by default)
+  → wrinkle_mask (point wrangle):
+      vector nrm = normalize(@N);
+      float rim = pow(clamp(1 - abs(dot(nrm, {0,1,0})), 0, 1), 1.8);
+      float n = fit(snoise(@P*40 + {13.1,7.7,21.3}), -1, 1, 0, 1);
+      f@mask = clamp(rim * n, 0, 1);
+  → cloth_constraints (vellumconstraints, cloth)
+  → pressure_constraints (vellumconstraints, pressure, stacked)
+  → inflate_wrangle (existing pressure restlength scaler)
+  → wrinkle_restlength (2-input primitive wrangle — see below)
+  → pillow_solver input 1 (constraint input)
 ```
 
-`restlengthorig` (not `restlength`) is the read source — always scale from
-the pristine original, never the current value, or repeated evaluations
-compound. `Bg`/`Fg` (spare floats, e.g. 0.5/1.5 in the reference) are the
-compress/relax bounds `fit01` remaps the mask into: mask 0 → rest length
-×`Bg` (shorter than the actual distance → the constraint fights to pull
-that edge in → buckling), mask 1 → ×`Fg` (longer/slack → stays flat). This
-is the same `restlength`-is-the-real-target fact as the pressure constraint
-finding above, applied to stretch instead of volume.
+**Silent-failure gotcha, cost real debugging time**: a point attribute
+(`mask`) added upstream of `vellumconstraints` survives onto its **output 0**
+(geometry stream — confirmed via `get_geometry_info`) but is silently
+**dropped from output 1** (the constraint stream) even though output 1's
+points are the same point numbers. `get_geometry_info` only ever reads a
+node's default output, so this required wiring a throwaway `null` to output
+1 via `connect_nodes(output_index=1)` to catch it. Fix: give the restlength
+wrangle **two inputs** — input 0 the constraint stream (primitives, has
+`type`/`restlength`/`restlengthorig`), input 1 any geometry stream that
+still carries `mask` on its points (`wrinkle_mask`'s own output works) —
+then cross-reference by point number inside the wrangle:
 
-Blocked on resolution: this needs a much denser mesh than the current 6
-divisions/axis box to read as fine fabric wrinkling rather than a few big
-buckles — raise `cloth_resolution`'s subdivide depth (or the box's own
-divisions) substantially before attempting this, and expect the solve to
-get noticeably slower per iteration. Where to paint/generate the mask for
-this pillow (no by-hand paint tool over MCP) is still open — most likely a
-proximity-to-rim computation like `detail_wrangle`'s existing normal-based
-mask, feeding `fit01` instead of driving `@P` directly.
+```
+if (s@type == "stretch") {
+    int pt0 = primpoint(0, @primnum, 0);
+    int pt1 = primpoint(0, @primnum, 1);
+    float mask = (point(1, "mask", pt0) + point(1, "mask", pt1)) * 0.5;
+    f@restlength = f@restlengthorig * fit01(mask, chf("wrinkle_compress", 0.75), chf("wrinkle_relax", 1.15));
+}
+```
+
+`restlengthorig` is a real attribute `vellumconstraints` creates
+automatically alongside `restlength`/`type`/`stiffness` — always scale from
+it, never from `restlength`, or repeated cooks compound.
+
+**Second gotcha**: a *pure* rim-orientation mask (facing-away-from-Y, no
+noise term) is nearly constant across an entire flat box face, so
+`fit01(mask, 0.5, 1.5)` compresses the *whole face* uniformly — the solver
+resolves that as one giant fold plus an unstable spike at the corner where
+stress concentrated, not fine wrinkling. Multiplying the rim term by a
+high-frequency `snoise` before the `fit01` breaks the compression into
+irregular patches, which is what actually reads as wrinkling; softened the
+compress/relax range to 0.75/1.15 at the same time (0.5/1.5 was the
+spike-producing value). Confirmed via `viewport_snapshot` at frame 30: a
+localized crumpled band along one rim, no runaway spike, overall cushion
+bounding box unchanged (~1.35 × 0.50 × 1.37, still flat not ballooned).
+
+**Tool note**: `sync_vex_parms` did not create spare parms for either
+`chf()` call in the wrangle above (`created: []`, `already_present: []`,
+no error) — the `chf()` calls still evaluate fine with their literal
+defaults, so this only costs a UI slider, not function. Not root-caused;
+retry the tool before assuming it's permanently broken.
+
+Not yet done: render-quality lighting for this specific camera angle (the
+existing two-light Karma setup self-shadows half the object from some
+angles — same class of issue as the arealight/ground gotcha above, not a
+regression from this pass) and bumping `render_snapshot` past `preview`.

@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<shelfDocument>
+  <!-- 3dprint shelf: personal productivity tool for starting a new 3D-print
+       project. Own file, not default.shelf (Houdini rewrites default.shelf
+       on exit, so a tool parked there is a local artifact no deploy can
+       reproduce). Local-machine tool only, no pc137 / production scenes
+       involved. -->
+
+  <toolshelf name="3dprint" label="3D Print">
+    <memberTool name="3dprint_new_project"/>
+  </toolshelf>
+
+  <tool name="3dprint_new_project" label="New 3D Print Project" icon="PLASMA_App">
+    <helpText><![CDATA[Start a new 3D-print project: asks for a project
+name, creates Y:/3dPrints/<name>/houdini/, sets the $JOB variable to the
+project root, and saves the current hip file there as <name>_v001.hip.]]></helpText>
+    <script scriptType="python"><![CDATA[import os
+import hou
+
+ROOT = "Y:/3dPrints"
+
+button, name = hou.ui.readInput(
+    "Project name:",
+    buttons=("OK", "Cancel"),
+    title="New 3D Print Project",
+    close_choice=1,
+)
+name = name.strip()
+
+if button != 0 or not name:
+    hou.ui.displayMessage("Cancelled: no project name given.", severity=hou.severityType.Warning)
+else:
+    project_dir = f"{ROOT}/{name}"
+    houdini_dir = f"{project_dir}/houdini"
+
+    if os.path.isdir(project_dir):
+        hou.ui.displayMessage(
+            f"Project folder already exists:\n{project_dir}\n\nPick a different name.",
+            severity=hou.severityType.Error,
+        )
+    else:
+        os.makedirs(houdini_dir)
+
+        hou.hscript(f'set JOB = "{project_dir}"')
+        hou.allowEnvironmentToOverwriteVariable("JOB", False)
+
+        hip_path = f"{houdini_dir}/{name}_v001.hip"
+        hou.hipFile.save(hip_path)
+
+        geo = hou.node("/obj").createNode("geo", name)
+        geo.moveToGoodPosition()
+
+        print(f"3dprint: new project '{name}' -> JOB={project_dir}, saved {hip_path}")]]></script>
+  </tool>
+</shelfDocument>
