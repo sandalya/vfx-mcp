@@ -189,6 +189,47 @@ Overriding `Edit/Paste` follows the same `findItem`/`removeItem`/
 `Little Helpers/...` entries, just on `nuke.menu("Nuke")` instead of
 `nuke.menu("Nodes")`.
 
+## Studio share `little_helpers` resolves under `Documents\plarium-nuke-external`, not the raw UNC path (confirmed live 2026-09-11)
+
+The 2026-09-10 entry above flagged the share path as unverifiable over ssh
+and only guessable from `init.py`'s `pluginAddPath` call. Live-checked in a
+real Nuke session on pc137 after the TD rollout landed and the personal
+`C:/Users/Admin/.nuke/little_helpers/` copy was deleted:
+
+```
+print(little_helpers.__file__)
+# C:\Users\Admin\Documents\plarium-nuke-external\little_helpers-2\little_helpers\__init__.py
+```
+
+So the pipeline's actual install point is a synced/managed local mirror
+under `Documents\plarium-nuke-external\little_helpers-2\`, not a raw
+`\\loky.rep2.local\...` UNC read. Whatever puts it there (launcher sync,
+`NUKE_PATH` injection, or something else) still isn't identified — doesn't
+change anything about the router design, since it only cares that
+`import little_helpers` resolves to *something*, not to which path — but
+it answers "which copy are other artists on" partially: it's a per-machine
+synced copy, not a live UNC read, so two artists' copies can in principle
+be out of sync with each other depending on when each last synced.
+
+## `lh_router`'s `nuke`-module state stash survives self-reload (verified live 2026-09-11)
+
+`nuke/plugin/lh_router.py` stores its dev/prod flag (`nuke._lh_dev_mode`)
+and its floating mode-badge widget instance (`nuke._lh_mode_badge`) as
+attributes on the `nuke` module itself, specifically because the router's
+own menu commands `importlib.reload()` the router module on every press —
+the same pattern that orphans `nuke_mcp_plugin.py`'s `_hud`/`_mcp_hud`
+module-level references (see that file's comments). Confirmed working as
+designed on pc137: repeated `F12` presses correctly toggled
+`[DEV]`/`[MAIN]` in the Script Editor and the on-screen badge across many
+consecutive presses, with no orphaned/duplicate badge and no flag reset.
+Full dev-mode dispatch also confirmed live: with `little_helpers_dev`
+deployed via `nuke-dev`, pressing a tool hotkey in each mode printed the
+correct package and path — `[MAIN] little_helpers active` resolving to
+`...\Documents\plarium-nuke-external\little_helpers-2\little_helpers\__init__.py`,
+`[DEV] little_helpers_dev active` resolving to
+`C:\Users\Admin\.nuke\little_helpers_dev\__init__.py` — across repeated
+toggles with no state loss.
+
 ## `nuke_execute_code`'s `exec(code, {}, local_ns)` breaks nested-`def` closures over top-level names (confirmed 2026-09-11)
 
 The plugin's `cmd_execute_code` (`nuke/plugin/nuke_mcp_plugin.py`) runs

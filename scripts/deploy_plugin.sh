@@ -12,6 +12,12 @@
 # retired. "hmcp-local" deploys the same hmcp package to THIS machine's own
 # local Houdini (20.5.278), for the no-VPN/loopback workflow -- set
 # HMCP_HOST=127.0.0.1 on the bridge side to talk to it (see README.md).
+#
+# "nuke-dev" deploys the little_helpers *dev worktree*
+# (../little_helpers-dev, branch `dev`) under the separate top-level name
+# `little_helpers_dev` -- never folded into "nuke" or "all". See
+# nuke/docs/plans/LITTLE_HELPERS_BRANCH_WORKFLOW.md. It never touches
+# nuke_mcp_plugin.py or lh_router.py -- infra is not part of the dev lane.
 
 set -euo pipefail
 
@@ -37,28 +43,25 @@ HMCP_SHELF_LOCAL_TARGET="$HOME/Documents/houdini20.5/toolbar/hmcp.shelf"
 
 NUKE_LOCAL_DIR="$REPO_ROOT/nuke/plugin"
 NUKE_REMOTE_DIR='C:/Users/Admin/.nuke'
-NUKE_FILES=("nuke_mcp_plugin.py")
+NUKE_FILES=("nuke_mcp_plugin.py" "lh_router.py")
 
-# little_helpers/ is its own repo (github.com/sandalya/little_helpers) as of
-# the Phase 0 restructuring -- checked out as a sibling directory next to
-# this repo, not inside it. As of that repo's 2026-08-20 restructure
-# ("Restructure repo root: package moves into little_helpers/, add
-# menu.py"), the repo root itself just holds menu.py + docs -- the actual
-# importable package lives one level down, at little_helpers/little_helpers/.
-LITTLE_HELPERS_REPO_DIR="$(cd "$REPO_ROOT/.." && pwd)/little_helpers"
-LITTLE_HELPERS_PKG_DIR="$LITTLE_HELPERS_REPO_DIR/little_helpers"
-NUKE_LITTLE_HELPERS_LOCAL_DIR="$LITTLE_HELPERS_PKG_DIR"
-NUKE_LITTLE_HELPERS_REMOTE_DIR='C:/Users/Admin/.nuke/little_helpers'
-
-NUKE_LITTLE_HELPERS_SPLIT_LAYERS_LOCAL_DIR="$LITTLE_HELPERS_PKG_DIR/split_layers"
-NUKE_LITTLE_HELPERS_SPLIT_LAYERS_REMOTE_DIR='C:/Users/Admin/.nuke/little_helpers/split_layers'
-
-NUKE_LITTLE_HELPERS_VERITER_LOCAL_DIR="$LITTLE_HELPERS_PKG_DIR/veriter"
-NUKE_LITTLE_HELPERS_VERITER_REMOTE_DIR='C:/Users/Admin/.nuke/little_helpers/veriter'
+# little_helpers/ is its own repo (github.com/sandalya/little_helpers).
+# Production is installed on the studio share by the TD from git, never
+# scp'd by this script -- only the dev worktree below is deployed from here.
+#
+# Dev worktree -- sibling of this repo, branch `dev`, created once via
+# `git branch dev && git worktree add ../little_helpers-dev dev` in the
+# little_helpers repo (Step 3 of the plan doc). Deployed under a different
+# top-level directory name so it can never shadow the production copy.
+LITTLE_HELPERS_DEV_REPO_DIR="$(cd "$REPO_ROOT/.." && pwd)/little_helpers-dev"
+LITTLE_HELPERS_DEV_PKG_DIR="$LITTLE_HELPERS_DEV_REPO_DIR/little_helpers"
+NUKE_LITTLE_HELPERS_DEV_REMOTE_DIR='C:/Users/Admin/.nuke/little_helpers_dev'
+NUKE_LITTLE_HELPERS_DEV_SPLIT_LAYERS_REMOTE_DIR='C:/Users/Admin/.nuke/little_helpers_dev/split_layers'
+NUKE_LITTLE_HELPERS_DEV_VERITER_REMOTE_DIR='C:/Users/Admin/.nuke/little_helpers_dev/veriter'
 
 TARGET="${1:-}"
-if [[ -z "$TARGET" || ! "$TARGET" =~ ^(houdini|hmcp|hmcp-local|nuke|all)$ ]]; then
-  echo "Usage: $0 <houdini|hmcp|hmcp-local|nuke|all>" >&2
+if [[ -z "$TARGET" || ! "$TARGET" =~ ^(houdini|hmcp|hmcp-local|nuke|nuke-dev|all)$ ]]; then
+  echo "Usage: $0 <houdini|hmcp|hmcp-local|nuke|nuke-dev|all>" >&2
   exit 1
 fi
 
@@ -77,8 +80,8 @@ deploy_one() {
 
   for f in "$@"; do
     local backup_name="${f}.bak_${STAMP}"
-    echo "==> Backup $f -> $backup_name"
-    ssh pc137 "powershell -Command \"Copy-Item '$remote_dir/$f' '$remote_dir/$backup_name'\""
+    echo "==> Backup $f -> $backup_name (if it exists)"
+    ssh pc137 "powershell -Command \"if (Test-Path '$remote_dir/$f') { Copy-Item '$remote_dir/$f' '$remote_dir/$backup_name' }\""
     echo "==> SCP $f -> pc137"
     scp "$local_dir/$f" "pc137:$remote_dir/$f"
   done
@@ -175,22 +178,40 @@ fi
 if [[ "$TARGET" == "nuke" || "$TARGET" == "all" ]]; then
   echo "=== Nuke plugin (infra) ==="
   deploy_one "$NUKE_LOCAL_DIR" "$NUKE_REMOTE_DIR" "${NUKE_FILES[@]}"
+  # little_helpers itself is NOT deployed here. Production now lives on the
+  # studio share, installed by the TD from git (never scp) -- a personal
+  # C:/Users/Admin/.nuke/little_helpers/ copy is the exact "two copies of
+  # the same name" hazard the router design exists to remove. See
+  # nuke/docs/plans/LITTLE_HELPERS_BRANCH_WORKFLOW.md, Step 7.
+fi
 
-  if [ ! -d "$LITTLE_HELPERS_REPO_DIR" ]; then
-    echo "ERROR: little_helpers/ sibling checkout not found at $LITTLE_HELPERS_REPO_DIR" >&2
-    echo "  It's a separate repo now -- clone it next to this one:" >&2
-    echo "    git clone https://github.com/sandalya/little_helpers.git \"$LITTLE_HELPERS_REPO_DIR\"" >&2
+if [[ "$TARGET" == "nuke-dev" ]]; then
+  if [ ! -d "$LITTLE_HELPERS_DEV_REPO_DIR" ]; then
+    echo "ERROR: dev worktree not found at $LITTLE_HELPERS_DEV_REPO_DIR" >&2
+    echo "  Create it once from the little_helpers repo:" >&2
+    echo "    git branch dev && git worktree add ../little_helpers-dev dev" >&2
     exit 1
   fi
 
-  echo "=== little_helpers (artist tools) ==="
-  deploy_dir "$NUKE_LITTLE_HELPERS_LOCAL_DIR" "$NUKE_LITTLE_HELPERS_REMOTE_DIR"
-  echo "=== little_helpers/split_layers ==="
-  deploy_dir "$NUKE_LITTLE_HELPERS_SPLIT_LAYERS_LOCAL_DIR" "$NUKE_LITTLE_HELPERS_SPLIT_LAYERS_REMOTE_DIR" skip_backup
-  echo "=== little_helpers/veriter ==="
-  deploy_dir "$NUKE_LITTLE_HELPERS_VERITER_LOCAL_DIR" "$NUKE_LITTLE_HELPERS_VERITER_REMOTE_DIR" skip_backup
-  echo "==> Clean stale __pycache__ under little_helpers (flat-import-era .pyc can shadow the new subpackage)"
-  ssh pc137 "powershell -Command \"Get-ChildItem -Path '$NUKE_LITTLE_HELPERS_REMOTE_DIR' -Recurse -Filter '__pycache__' -Directory | Remove-Item -Recurse -Force\""
+  echo "=== little_helpers_dev (dev worktree, branch 'dev') ==="
+  deploy_dir "$LITTLE_HELPERS_DEV_PKG_DIR" "$NUKE_LITTLE_HELPERS_DEV_REMOTE_DIR" skip_backup
+  echo "=== little_helpers_dev/split_layers ==="
+  deploy_dir "$LITTLE_HELPERS_DEV_PKG_DIR/split_layers" "$NUKE_LITTLE_HELPERS_DEV_SPLIT_LAYERS_REMOTE_DIR" skip_backup
+  echo "=== little_helpers_dev/veriter ==="
+  deploy_dir "$LITTLE_HELPERS_DEV_PKG_DIR/veriter" "$NUKE_LITTLE_HELPERS_DEV_VERITER_REMOTE_DIR" skip_backup
+  echo "==> Clean stale __pycache__ under little_helpers_dev"
+  ssh pc137 "powershell -Command \"Get-ChildItem -Path '$NUKE_LITTLE_HELPERS_DEV_REMOTE_DIR' -Recurse -Filter '__pycache__' -Directory | Remove-Item -Recurse -Force\""
+
+  echo "==> py_compile every deployed .py file (syntax check only -- catches"
+  echo "    a broken file before a hotkey silently does nothing; the real"
+  echo "    gate is a manual smoke test on pc137, not this)"
+  # $ErrorActionPreference='Stop' is required for a failed native-exe launch
+  # (e.g. the Microsoft Store python.exe alias stub when no real Python is
+  # installed -- `Get-Command python` finds it, but invoking it throws "The
+  # system cannot find the path specified") to become a catchable
+  # try/catch error instead of noisy inline PowerShell error text.
+  ssh pc137 "powershell -Command \"\$ErrorActionPreference = 'Stop'; try { python --version *>\$null } catch { Write-Host 'python not usable over ssh -- skipping py_compile check'; exit 0 }; \$failed = 0; Get-ChildItem -Path '$NUKE_LITTLE_HELPERS_DEV_REMOTE_DIR' -Recurse -Filter '*.py' | ForEach-Object { \$f = \$_.FullName; try { python -m py_compile \$f 2>\$null } catch { Write-Host \"SYNTAX ERROR: \$f\"; \$failed = 1 } }; if (\$failed) { exit 1 }\"" \
+    || echo "    (non-fatal -- see message above; verify by hand if this looks wrong)"
 fi
 
 echo "==> Done."
@@ -248,6 +269,26 @@ if [[ "$TARGET" == "nuke" || "$TARGET" == "all" ]]; then
   echo "       little_helpers.register_menu()"
   echo "  (the existing 'import nuke_mcp_plugin; nuke_mcp_plugin.register_menu()'"
   echo "  lines stay -- the MCP menu entry still comes from there)."
+  echo
+  echo "  If menu.py doesn't call lh_router yet, add it AFTER the"
+  echo "  little_helpers.register_menu() line above (typed by hand):"
+  echo "       try:"
+  echo "           import lh_router"
+  echo "           lh_router.register_menu()"
+  echo "       except Exception as exc:"
+  echo "           print(\"lh_router not loaded: %s\" % exc)"
+  echo "  This overwrites Shift+A/Shift+E/F10/Ctrl+V with router-dispatched"
+  echo "  versions and adds F12 (dev/prod toggle -- NOT yet collision-checked,"
+  echo "  see Step 2 of the plan doc)."
+  echo
+fi
+
+if [[ "$TARGET" == "nuke-dev" ]]; then
+  echo "Next steps for nuke-dev (RDP):"
+  echo "  In the Script Editor, press F12 once to switch the router to"
+  echo "  little_helpers_dev, confirm the badge says DEV and the printed"
+  echo "  line names little_helpers_dev's __file__, then exercise the tool"
+  echo "  on a Save As copy of the shot, not the live script."
   echo
 fi
 
