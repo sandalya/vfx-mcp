@@ -188,3 +188,40 @@ Overriding `Edit/Paste` follows the same `findItem`/`removeItem`/
 `addCommand` idiom `register_menu()` already uses for the three
 `Little Helpers/...` entries, just on `nuke.menu("Nuke")` instead of
 `nuke.menu("Nodes")`.
+
+## `nuke_execute_code`'s `exec(code, {}, local_ns)` breaks nested-`def` closures over top-level names (confirmed 2026-09-11)
+
+The plugin's `cmd_execute_code` (`nuke/plugin/nuke_mcp_plugin.py`) runs
+diagnostic code as `exec(code, {}, local_ns)` — two *different* dict
+objects for globals and locals. This is the same scoping CPython uses for
+a class body, and it has the same well-known gotcha: a `def` written at
+the top level of the exec'd code can only close over another top-level
+name via a genuine closure if the compiler recognizes an enclosing
+*function* scope. Exec/class-body top-level "locals" don't count as that —
+a name looked up inside a nested `def` resolves via `LOAD_GLOBAL` against
+that function's `__globals__`, which was bound to the `{}` passed to
+`exec()`, not `local_ns`. Any name that only exists in `local_ns` is
+invisible to the nested function, and fails inside it at call time, not
+at `def` time — confirmed by a direct A/B (a closure-based fake read
+`captured` fine when called in the same top-level scope that defined it,
+but calling the exact same function object from *another module's* code
+failed).
+
+This bit while trying to monkeypatch `nuke.ask` with a closure-based fake
+to dry-run `_maybe_repath_cross_shot_reads` without a live popup — the
+call surfaced only as `'NoneType' object is not a mapping`, a genuinely
+misleading message (`cmd_execute_code`'s error path collapses whatever
+went wrong to `str(exception)`, no traceback returned over the socket).
+The exact mechanism behind that specific message was never nailed down
+(plausible: the broken fake raised before returning, so the *real*
+`nuke.ask` fired for real on pc137's main thread) — not worth more
+forensic effort now that the underlying scoping gotcha is understood and
+the actual feature was separately confirmed working by Sashok's own live
+test.
+
+**Fix for any future diagnostic script that needs to monkeypatch/close
+over a value from `execute_code`**: bind it as a default-argument value
+instead of relying on closure —
+`def fake(x, _captured=captured): ...` — default args are evaluated
+eagerly at `def`-time and read back via `LOAD_FAST`, sidestepping the
+global/local split entirely.
