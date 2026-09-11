@@ -230,6 +230,35 @@ correct package and path — `[MAIN] little_helpers active` resolving to
 `C:\Users\Admin\.nuke\little_helpers_dev\__init__.py` — across repeated
 toggles with no state loss.
 
+## A reload-persistent object needs its own staleness check, not just the flag pattern (confirmed 2026-09-11)
+
+`lh_router._ModeBadge`'s instance is deliberately stashed on `nuke`
+(`nuke._lh_mode_badge`) so it survives `lh_router`'s self-reload on every
+press -- same reasoning as the mode flag. That worked exactly as intended
+for *state* (the flag), but not for *code*: adding a new method
+(`flash_status()`) to `_ModeBadge` and redeploying hit the live badge with
+`AttributeError: '_ModeBadge' object has no attribute 'flash_status'`.
+
+Cause: `importlib.reload()` re-executes the module and rebinds the class
+name (`_ModeBadge`) to a *new* class object in the module's namespace, but
+any already-constructed instance's `__class__` still points at the *old*
+class object -- reload never re-classes existing instances. An object kept
+alive specifically to survive reload therefore keeps running on whatever
+class shape existed when it was built, silently missing anything a later
+edit added, until something crashes on the missing attribute.
+
+This is the same root cause as `nuke_mcp_plugin`'s documented `_hud`/
+`_mcp_hud` gotcha (reload wiping a module-level reference), but the fix is
+the opposite shape: those are solved by *always rebuilding* on every press
+(cheap, since they're throwaway UI). A reload-persistent object can't take
+that fix without losing the reason it's persistent, so it needs an active
+staleness check instead: `_update_badge()` now does
+`isinstance(badge, _ModeBadge)` against the *current* class before reusing
+the cached instance, and transparently rebuilds if it's stale. Generalizes:
+**anything stashed on `nuke` specifically to survive a self-reloading
+module's reload must re-validate its class on every access, not just check
+"does it exist."**
+
 ## `nuke_execute_code`'s `exec(code, {}, local_ns)` breaks nested-`def` closures over top-level names (confirmed 2026-09-11)
 
 The plugin's `cmd_execute_code` (`nuke/plugin/nuke_mcp_plugin.py`) runs

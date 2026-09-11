@@ -5,8 +5,10 @@ Dev/prod router for little_helpers. Sits between the stock hotkeys
 (Shift+A / Shift+E / F10 / Ctrl+V) and whichever package is currently
 active -- little_helpers (studio share, production) or little_helpers_dev
 (worktree, iterated on via `deploy_plugin.sh nuke-dev`). F12 toggles which
-one the hotkeys run. See nuke/docs/plans/LITTLE_HELPERS_BRANCH_WORKFLOW.md
-for the design this implements.
+one the hotkeys run; Shift+F12 does the same toggle and also starts/stops
+the MCP server to match, for "enter/leave a dev session" in one press. See
+nuke/docs/plans/LITTLE_HELPERS_BRANCH_WORKFLOW.md for the design this
+implements.
 
 Deployed by the existing `nuke` target (infra), never `nuke-dev`. Never
 imports little_helpers_dev at module level -- only on demand, when dev mode
@@ -28,6 +30,7 @@ VERSION_HUD_MENU_PATH = "Little Helpers/Change Layer Version"
 SPLIT_LAYERS_MENU_PATH = "Little Helpers/Split Layers"
 PASTE_OVERRIDE_MENU_PATH = "Edit/Paste"
 TOGGLE_MENU_PATH = "Little Helpers/Dev Mode (F12)"
+TOGGLE_WITH_MCP_MENU_PATH = "Little Helpers/Dev Mode + MCP (Shift+F12)"
 
 PROD_PACKAGE = "little_helpers"
 DEV_PACKAGE = "little_helpers_dev"
@@ -84,6 +87,42 @@ def toggle_dev_mode():
     _update_badge(label)
 
 
+def toggle_dev_mode_and_mcp():
+    """Shift+F12. Same flip as plain F12, plus starts/stops the MCP server
+    to match -- one press for "entering/leaving a dev session", since
+    Sashok wants MCP running whenever he's in DEV. Independent of plain
+    F12, which never touches MCP -- the two hotkeys are deliberately
+    separate, not a shared code path with a flag, so a plain-F12 press can
+    never have an MCP side effect by accident.
+
+    Reaches into nuke_mcp_plugin's module-level `_server_thread` directly
+    (same pattern that module's own _McpHud class uses internally) --
+    there is no public is-it-running accessor, and adding one for a single
+    two-line caller isn't worth a new API surface."""
+    import nuke_mcp_plugin
+    importlib.reload(nuke_mcp_plugin)
+
+    nuke._lh_dev_mode = not _dev_mode()
+    name = _active_package_name()
+    label = "DEV" if name == DEV_PACKAGE else "MAIN"
+
+    was_running = (
+        nuke_mcp_plugin._server_thread is not None
+        and nuke_mcp_plugin._server_thread.is_alive()
+    )
+    if nuke._lh_dev_mode:
+        nuke_mcp_plugin.start_server()
+        mcp_status = "MCP already running" if was_running else "MCP started"
+    else:
+        nuke_mcp_plugin.stop_server()
+        mcp_status = "MCP stopped" if was_running else "MCP was not running"
+
+    print(f"[{label}] dev mode {'ON' if _dev_mode() else 'OFF'} + "
+          f"{mcp_status} -- hotkeys now run {name}")
+    badge = _update_badge(label)
+    badge.flash_status(mcp_status)
+
+
 # ---- floating mode badge ---------------------------------------------------
 # Reuses the RDP-hardened idiom from nuke_mcp_plugin._PrintHUD /
 # little_helpers/hud.py: frameless + WindowStaysOnTopHint + Tool, rounded
@@ -106,11 +145,17 @@ class _ModeBadge(QtWidgets.QWidget):
         self.setAttribute(QtCore.Qt.WA_DeleteOnClose, False)
         self.setStyleSheet("""
             QLabel { color: white; font-weight: 700; font-size: 11px; }
+            #status { color: rgba(255, 255, 255, 210); font-weight: 400; font-size: 9px; }
         """)
-        layout = QtWidgets.QHBoxLayout(self)
+        layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(12, 5, 12, 5)
+        layout.setSpacing(2)
         self.label = QtWidgets.QLabel("MAIN")
         layout.addWidget(self.label)
+        self.status = QtWidgets.QLabel("")
+        self.status.setObjectName("status")
+        self.status.hide()
+        layout.addWidget(self.status)
         self.resize(76, 26)
 
     def resizeEvent(self, event):
@@ -135,6 +180,22 @@ class _ModeBadge(QtWidgets.QWidget):
         self.label.setText(label)
         self.update()
 
+    def flash_status(self, text, ms=1400):
+        """Temporary second line, same corner as the persistent MAIN/DEV
+        text -- mirrors nuke_mcp_plugin._McpHud's flash-and-hide status
+        label, just anchored at the mode badge instead of near the
+        cursor."""
+        self.status.setText(text)
+        self.status.show()
+        self.adjustSize()
+        self.move_to_corner()
+        QtCore.QTimer.singleShot(ms, self._clear_status)
+
+    def _clear_status(self):
+        self.status.hide()
+        self.adjustSize()
+        self.move_to_corner()
+
     def move_to_corner(self):
         screen = QtWidgets.QApplication.primaryScreen()
         if screen is None:
@@ -145,6 +206,21 @@ class _ModeBadge(QtWidgets.QWidget):
 
 def _update_badge(label):
     badge = getattr(nuke, "_lh_mode_badge", None)
+    # `isinstance` here checks against the *current* _ModeBadge class
+    # object -- if this module has been reload()'d since `badge` was built,
+    # `badge`'s actual class is a now-orphaned earlier version (reload
+    # rebinds the name in this module's namespace but never re-classes
+    # existing instances), missing whatever methods a later edit added.
+    # Same gotcha as nuke_mcp_plugin's _hud/_mcp_hud, just hitting a widget
+    # this design deliberately keeps alive across reloads instead of one
+    # that gets rebuilt every press -- so it needs its own staleness check
+    # instead of just always rebuilding.
+    if badge is not None and not isinstance(badge, _ModeBadge):
+        try:
+            badge.close()
+        except Exception:
+            pass
+        badge = None
     if badge is None:
         badge = _ModeBadge()
         nuke._lh_mode_badge = badge
@@ -152,6 +228,7 @@ def _update_badge(label):
         badge.show()
     badge.set_mode(label)
     badge.raise_()
+    return badge
 
 
 def ensure_badge():
@@ -218,6 +295,19 @@ def register_menu():
         "import importlib, lh_router; importlib.reload(lh_router); "
         "lh_router.toggle_dev_mode()",
         "F12",
+    )
+
+    # Also not yet collision-checked (see the F12 comment above) -- a
+    # second, separate binding by design (not Shift stacked onto the same
+    # command), so plain F12 keeps working even if this one turns out to
+    # collide and needs remapping.
+    if menu.findItem(TOGGLE_WITH_MCP_MENU_PATH):
+        menu.removeItem(TOGGLE_WITH_MCP_MENU_PATH)
+    menu.addCommand(
+        TOGGLE_WITH_MCP_MENU_PATH,
+        "import importlib, lh_router; importlib.reload(lh_router); "
+        "lh_router.toggle_dev_mode_and_mcp()",
+        "Shift+F12",
     )
 
     ensure_badge()

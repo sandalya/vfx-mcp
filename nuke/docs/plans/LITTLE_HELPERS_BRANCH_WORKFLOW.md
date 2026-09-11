@@ -50,8 +50,15 @@ hotkeys** that dispatches to whichever is currently active.
 - A **router** sits between the hotkeys and the packages. Each menu command
   reads a session-local mode flag, imports + `reload_all()`s the package that
   flag names, prints one line saying which one, then calls the tool.
-- **`F12` toggles the flag**, globally, and is the only new hotkey in this
-  design.
+- **`F12` toggles the flag**, globally.
+- **`Shift+F12`** does the same flip and also starts/stops the MCP server
+  to match (added 2026-09-11, after live use showed Sashok wants MCP
+  running whenever he's in DEV) — a separate hotkey, not a modifier on the
+  same code path, so plain `F12` can never have an MCP side effect by
+  accident. Flashes a temporary status line on the mode badge
+  ("MCP started"/"stopped"/etc). See `NUKE_NOTES.md`'s "A reload-persistent
+  object needs its own staleness check" entry for a real gotcha this hit
+  and fixed.
 
 Different top-level name means a different `sys.modules` key. Path order
 stops mattering, `importlib.reload` cannot cross over, and a stale `.pyc` in
