@@ -2,7 +2,7 @@
 lh_router
 
 Dev/prod router for little_helpers. Sits between the stock hotkeys
-(Shift+A / Shift+E / F10 / Alt+V) and whichever package is currently
+(Shift+A / Shift+E / F10 / Alt+V / F2) and whichever package is currently
 active -- little_helpers (studio share, production) or little_helpers_dev
 (worktree, iterated on via `deploy_plugin.sh nuke-dev`). F12 toggles which
 one the hotkeys run; Shift+F12 does the same toggle and also starts/stops
@@ -31,16 +31,22 @@ except ImportError:
 # router's own register_menu() runs *after* little_helpers.register_menu()
 # (see menu.py wiring) and re-touches every "Little Helpers/..." leaf
 # item; re-asserting the icon here too is a cheap defensive measure
-# against whatever Nuke-internal mechanism was dropping it (root cause
-# not confirmed -- Sashok's theory 2026-09-12: the submenu the pipeline's
-# own menu.py sets up first can't have its icon overwritten by a later
-# addMenu call on the same name; plausible, not proven).
+# against whatever Nuke-internal mechanism was dropping it. Root cause
+# (confirmed live on pc137 2026-09-12, not just theorized): other Nodes-menu
+# submenus DO show icons fine, so this isn't a Nuke-wide limitation -- the
+# studio's still-stale little_helpers creates "Little Helpers" first
+# (its addMenu call predates the icon= param), and Nuke's addMenu returns
+# the existing menu object on a name collision without updating its icon,
+# so this router's later addMenu(icon=...) call can't retroactively set it.
+# Same root cause as the duplicate-menu-items issue below: resolves itself
+# once the TD pulls current little_helpers into the studio share.
 _MENU_ICON_PATH = os.path.join(os.path.dirname(__file__), "little_helpers_menu.png")
 
 LAYER_PICKER_MENU_PATH = "Little Helpers/Create Render Branch"
 VERSION_HUD_MENU_PATH = "Little Helpers/Change Render Version"
 SPLIT_LAYERS_MENU_PATH = "Little Helpers/Split Layers"
 REPATH_PASTE_MENU_PATH = "Little Helpers/Repath Paste"  # Alt+V, standalone -- never touches native Edit/Paste (Ctrl+V)
+VIEWER_FLIP_MENU_PATH = "Little Helpers/Flip Viewers (F2)"
 TOGGLE_MENU_PATH = "Little Helpers/Dev Mode (F12)"
 TOGGLE_WITH_MCP_MENU_PATH = "Little Helpers/Dev Mode + MCP (Shift+F12)"
 
@@ -101,6 +107,10 @@ def show_split_layers():
 
 def paste_and_maybe_repath():
     _dispatch("paste_and_maybe_repath")
+
+
+def toggle_viewer_flip():
+    _dispatch("toggle_viewer_flip")
 
 
 def toggle_dev_mode():
@@ -310,6 +320,18 @@ def register_menu():
         "import importlib, lh_router; importlib.reload(lh_router); "
         "lh_router.paste_and_maybe_repath()",
         "Alt+V",
+    )
+
+    # Not yet collision-checked against every top-level Nuke menu (same
+    # caveat as F12/Shift+F12 below) -- verify live on pc137 before relying
+    # on it.
+    if menu.findItem(VIEWER_FLIP_MENU_PATH):
+        menu.removeItem(VIEWER_FLIP_MENU_PATH)
+    menu.addCommand(
+        VIEWER_FLIP_MENU_PATH,
+        "import importlib, lh_router; importlib.reload(lh_router); "
+        "lh_router.toggle_viewer_flip()",
+        "F2",
     )
 
     # Placeholder hotkey -- NOT collision-checked yet (see Step 2 of the

@@ -3,6 +3,23 @@
 Measured facts and gotchas for the Nuke side of this repo. Permanent,
 append-only. See `nuke/CLAUDE.md` for rules, `README.md` for topology.
 
+## `Mirror2`'s real knob names are `flip`/`flop`, not `horizontal`/`vertical` (confirmed 2026-09-12)
+
+Built while wiring `little_helpers/viewer_flip.py`'s F2 toggle: a `Mirror2`
+node has no `horizontal` knob (`NameError: knob horizontal does not
+exist`) — the actual knobs are `flip` (vertical mirror) and `flop`
+(horizontal mirror), photography/video terminology, not the checkbox
+labels a guess from the node's UI would suggest. Horizontal mirror is
+`node["flop"].setValue(True)`.
+
+Also hit on the same node: there is no generic `selectable` knob on an
+ordinary `Node` to lock it from being selected/moved in the DAG (that
+guessed name doesn't exist either). The real, available lever is the
+instance method `node.setSelected(False)` — it only clears the node from
+the *current* selection (new nodes come back selected by default), not a
+persistent lock, but it's enough to keep a programmatically-created
+helper node from being swept up in the artist's next Ctrl+C or drag.
+
 ## `little_helpers` repo mechanics (checked 2026-08-20)
 
 `little_helpers` (`github.com/sandalya/little_helpers`, sibling checkout
