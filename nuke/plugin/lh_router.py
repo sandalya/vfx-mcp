@@ -2,7 +2,7 @@
 lh_router
 
 Dev/prod router for little_helpers. Sits between the stock hotkeys
-(Shift+A / Shift+E / F10 / Alt+V / Ctrl+V) and whichever package is currently
+(Shift+A / Shift+E / F10 / Alt+V) and whichever package is currently
 active -- little_helpers (studio share, production) or little_helpers_dev
 (worktree, iterated on via `deploy_plugin.sh nuke-dev`). F12 toggles which
 one the hotkeys run; Shift+F12 does the same toggle and also starts/stops
@@ -28,8 +28,7 @@ except ImportError:
 LAYER_PICKER_MENU_PATH = "Little Helpers/Create Layer Branch"
 VERSION_HUD_MENU_PATH = "Little Helpers/Change Layer Version"
 SPLIT_LAYERS_MENU_PATH = "Little Helpers/Split Layers"
-PASTE_OVERRIDE_MENU_PATH = "Edit/Paste"
-PASTE_PLAIN_MENU_PATH = "Edit/Paste (Plain)"  # Ctrl+V, mirrors little_helpers.PASTE_PLAIN_MENU_PATH
+REPATH_PASTE_MENU_PATH = "Edit/Repath Paste"  # Alt+V, standalone -- never touches native Edit/Paste (Ctrl+V)
 TOGGLE_MENU_PATH = "Little Helpers/Dev Mode (F12)"
 TOGGLE_WITH_MCP_MENU_PATH = "Little Helpers/Dev Mode + MCP (Shift+F12)"
 
@@ -90,10 +89,6 @@ def show_split_layers():
 
 def paste_and_maybe_repath():
     _dispatch("paste_and_maybe_repath")
-
-
-def paste_plain():
-    _dispatch("paste_plain")
 
 
 def toggle_dev_mode():
@@ -294,23 +289,16 @@ def register_menu():
         "F10",
     )
 
+    # Standalone command, never an override of native Edit/Paste (Ctrl+V
+    # stays untouched -- see REPATH_PASTE_MENU_PATH's comment above).
     nuke_menu = nuke.menu("Nuke")
-    if nuke_menu.findItem(PASTE_OVERRIDE_MENU_PATH):
-        nuke_menu.removeItem(PASTE_OVERRIDE_MENU_PATH)
+    if nuke_menu.findItem(REPATH_PASTE_MENU_PATH):
+        nuke_menu.removeItem(REPATH_PASTE_MENU_PATH)
     nuke_menu.addCommand(
-        PASTE_OVERRIDE_MENU_PATH,
+        REPATH_PASTE_MENU_PATH,
         "import importlib, lh_router; importlib.reload(lh_router); "
         "lh_router.paste_and_maybe_repath()",
         "Alt+V",
-    )
-
-    if nuke_menu.findItem(PASTE_PLAIN_MENU_PATH):
-        nuke_menu.removeItem(PASTE_PLAIN_MENU_PATH)
-    nuke_menu.addCommand(
-        PASTE_PLAIN_MENU_PATH,
-        "import importlib, lh_router; importlib.reload(lh_router); "
-        "lh_router.paste_plain()",
-        "Ctrl+V",
     )
 
     # Placeholder hotkey -- NOT collision-checked yet (see Step 2 of the
