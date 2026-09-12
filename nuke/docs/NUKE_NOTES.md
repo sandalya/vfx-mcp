@@ -180,14 +180,10 @@ never assume there is one.
 "go to next keyframe" collision documented earlier in this file). Full
 live-probed inventory of paste-related bindings:
 
-- `Nuke/Edit/Paste` — `Ctrl+V` — `with nuke.lastHitGroup(): nuke.nodePaste(nukescripts.cut_paste_file())`
-- `Nuke/Edit/@;Paste2` — `Ctrl+Shift+V` — `nuke.nodePaste(nukescripts.cut_paste_file())` (no `lastHitGroup()` — pastes without regard to the group under the cursor). Not currently overridden by `little_helpers.repath` — only plain `Ctrl+V` is.
+- `Nuke/Edit/Paste` — natively `Ctrl+V` — `with nuke.lastHitGroup(): nuke.nodePaste(nukescripts.cut_paste_file())`. `little_helpers.repath` overrides this exact menu path (`findItem`/`removeItem`/`addCommand`, same idiom `register_menu()` uses for the three `Little Helpers/...` entries, just on `nuke.menu("Nuke")` instead of `nuke.menu("Nodes")`) and rebinds it to `Alt+V` (moved off `Ctrl+V` 2026-09-11, Sashok's ask, to keep plain `Ctrl+V` free). Confirmed live 2026-09-12: `removeItem` really does drop the native `Ctrl+V` binding for good, no fallback — plain `Ctrl+V` did nothing until a *second* override, `Edit/Paste (Plain)` (`little_helpers.paste_plain`, identical body to the native command, no repath check), was added and bound to `Ctrl+V` itself.
+- `Nuke/Edit/Paste (Plain)` — `Ctrl+V` — added 2026-09-12, `little_helpers.paste_plain` — restores what the native `Edit/Paste` used to do, now that that menu path/hotkey belongs to the repath override above.
+- `Nuke/Edit/@;Paste2` — `Ctrl+Shift+V` — `nuke.nodePaste(nukescripts.cut_paste_file())` (no `lastHitGroup()` — pastes without regard to the group under the cursor). Not overridden by `little_helpers.repath`.
 - `Nuke/Edit/Paste Knob Values` — `Ctrl+Alt+V` — unrelated (copies knob values, not nodes).
-
-Overriding `Edit/Paste` follows the same `findItem`/`removeItem`/
-`addCommand` idiom `register_menu()` already uses for the three
-`Little Helpers/...` entries, just on `nuke.menu("Nuke")` instead of
-`nuke.menu("Nodes")`.
 
 ## Studio share `little_helpers` resolves under `Documents\plarium-nuke-external`, not the raw UNC path (confirmed live 2026-09-11)
 

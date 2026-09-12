@@ -2,7 +2,7 @@
 lh_router
 
 Dev/prod router for little_helpers. Sits between the stock hotkeys
-(Shift+A / Shift+E / F10 / Ctrl+V) and whichever package is currently
+(Shift+A / Shift+E / F10 / Alt+V / Ctrl+V) and whichever package is currently
 active -- little_helpers (studio share, production) or little_helpers_dev
 (worktree, iterated on via `deploy_plugin.sh nuke-dev`). F12 toggles which
 one the hotkeys run; Shift+F12 does the same toggle and also starts/stops
@@ -29,6 +29,7 @@ LAYER_PICKER_MENU_PATH = "Little Helpers/Create Layer Branch"
 VERSION_HUD_MENU_PATH = "Little Helpers/Change Layer Version"
 SPLIT_LAYERS_MENU_PATH = "Little Helpers/Split Layers"
 PASTE_OVERRIDE_MENU_PATH = "Edit/Paste"
+PASTE_PLAIN_MENU_PATH = "Edit/Paste (Plain)"  # Ctrl+V, mirrors little_helpers.PASTE_PLAIN_MENU_PATH
 TOGGLE_MENU_PATH = "Little Helpers/Dev Mode (F12)"
 TOGGLE_WITH_MCP_MENU_PATH = "Little Helpers/Dev Mode + MCP (Shift+F12)"
 
@@ -58,7 +59,21 @@ def _dispatch(entry_point):
     pkg.reload_all()
     label = "DEV" if name == DEV_PACKAGE else "MAIN"
     print(f"[{label}] {name} active -- {pkg.__file__}")
-    getattr(pkg, entry_point)()
+    fn = getattr(pkg, entry_point, None)
+    if fn is None:
+        # The two packages are allowed to drift -- little_helpers_dev is
+        # iterated on ahead of what the TD has pulled into production, on
+        # purpose. Without this check, pressing a hotkey for a feature
+        # that only exists in dev while in MAIN mode threw a raw
+        # AttributeError straight at the artist (confirmed live
+        # 2026-09-12: MAIN + Alt+V, paste_and_maybe_repath not yet in
+        # that studio-share checkout). A clear print is the whole fix --
+        # this isn't a bug to route around, MAIN genuinely can't run a
+        # command it doesn't have yet.
+        print(f"[{label}] {name} has no '{entry_point}' -- this feature "
+              f"isn't in that checkout yet (F12 for DEV if it should be).")
+        return
+    fn()
 
 
 def show_layer_picker():
@@ -75,6 +90,10 @@ def show_split_layers():
 
 def paste_and_maybe_repath():
     _dispatch("paste_and_maybe_repath")
+
+
+def paste_plain():
+    _dispatch("paste_plain")
 
 
 def toggle_dev_mode():
@@ -282,6 +301,15 @@ def register_menu():
         PASTE_OVERRIDE_MENU_PATH,
         "import importlib, lh_router; importlib.reload(lh_router); "
         "lh_router.paste_and_maybe_repath()",
+        "Alt+V",
+    )
+
+    if nuke_menu.findItem(PASTE_PLAIN_MENU_PATH):
+        nuke_menu.removeItem(PASTE_PLAIN_MENU_PATH)
+    nuke_menu.addCommand(
+        PASTE_PLAIN_MENU_PATH,
+        "import importlib, lh_router; importlib.reload(lh_router); "
+        "lh_router.paste_plain()",
         "Ctrl+V",
     )
 
