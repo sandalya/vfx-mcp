@@ -28,7 +28,7 @@ except ImportError:
 LAYER_PICKER_MENU_PATH = "Little Helpers/Create Layer Branch"
 VERSION_HUD_MENU_PATH = "Little Helpers/Change Layer Version"
 SPLIT_LAYERS_MENU_PATH = "Little Helpers/Split Layers"
-REPATH_PASTE_MENU_PATH = "Edit/Repath Paste"  # Alt+V, standalone -- never touches native Edit/Paste (Ctrl+V)
+REPATH_PASTE_MENU_PATH = "Little Helpers/Repath Paste"  # Alt+V, standalone -- never touches native Edit/Paste (Ctrl+V)
 TOGGLE_MENU_PATH = "Little Helpers/Dev Mode (F12)"
 TOGGLE_WITH_MCP_MENU_PATH = "Little Helpers/Dev Mode + MCP (Shift+F12)"
 
@@ -289,12 +289,9 @@ def register_menu():
         "F10",
     )
 
-    # Standalone command, never an override of native Edit/Paste (Ctrl+V
-    # stays untouched -- see REPATH_PASTE_MENU_PATH's comment above).
-    nuke_menu = nuke.menu("Nuke")
-    if nuke_menu.findItem(REPATH_PASTE_MENU_PATH):
-        nuke_menu.removeItem(REPATH_PASTE_MENU_PATH)
-    nuke_menu.addCommand(
+    if menu.findItem(REPATH_PASTE_MENU_PATH):
+        menu.removeItem(REPATH_PASTE_MENU_PATH)
+    menu.addCommand(
         REPATH_PASTE_MENU_PATH,
         "import importlib, lh_router; importlib.reload(lh_router); "
         "lh_router.paste_and_maybe_repath()",
