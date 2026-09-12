@@ -43,7 +43,7 @@ HMCP_SHELF_LOCAL_TARGET="$HOME/Documents/houdini20.5/toolbar/hmcp.shelf"
 
 NUKE_LOCAL_DIR="$REPO_ROOT/nuke/plugin"
 NUKE_REMOTE_DIR='C:/Users/Admin/.nuke'
-NUKE_FILES=("nuke_mcp_plugin.py" "lh_router.py")
+NUKE_FILES=("nuke_mcp_plugin.py" "lh_router.py" "little_helpers_menu.png")
 
 # little_helpers/ is its own repo (github.com/sandalya/little_helpers).
 # Production is installed on the studio share by the TD from git, never

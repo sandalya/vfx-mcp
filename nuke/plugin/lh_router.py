@@ -17,6 +17,7 @@ dispatch.
 """
 
 import importlib
+import os
 
 import nuke
 
@@ -24,6 +25,17 @@ try:
     from PySide6 import QtWidgets, QtCore, QtGui
 except ImportError:
     from PySide2 import QtWidgets, QtCore, QtGui
+
+# Own copy, deployed alongside this file by deploy_plugin.sh's "nuke"
+# target -- not read from little_helpers/little_helpers_dev, since this
+# router's own register_menu() runs *after* little_helpers.register_menu()
+# (see menu.py wiring) and re-touches every "Little Helpers/..." leaf
+# item; re-asserting the icon here too is a cheap defensive measure
+# against whatever Nuke-internal mechanism was dropping it (root cause
+# not confirmed -- Sashok's theory 2026-09-12: the submenu the pipeline's
+# own menu.py sets up first can't have its icon overwritten by a later
+# addMenu call on the same name; plausible, not proven).
+_MENU_ICON_PATH = os.path.join(os.path.dirname(__file__), "little_helpers_menu.png")
 
 LAYER_PICKER_MENU_PATH = "Little Helpers/Create Render Branch"
 VERSION_HUD_MENU_PATH = "Little Helpers/Change Render Version"
@@ -261,6 +273,8 @@ def register_menu():
     deleting the `lh_router` import from menu.py reverts to stock
     little_helpers behaviour (always production) on the next launch."""
     menu = nuke.menu("Nodes")
+
+    menu.addMenu("Little Helpers", icon=_MENU_ICON_PATH)
 
     if menu.findItem(LAYER_PICKER_MENU_PATH):
         menu.removeItem(LAYER_PICKER_MENU_PATH)
