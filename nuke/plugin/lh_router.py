@@ -25,8 +25,8 @@ try:
 except ImportError:
     from PySide2 import QtWidgets, QtCore, QtGui
 
-LAYER_PICKER_MENU_PATH = "Little Helpers/Create Layer Branch"
-VERSION_HUD_MENU_PATH = "Little Helpers/Change Layer Version"
+LAYER_PICKER_MENU_PATH = "Little Helpers/Create Render Branch"
+VERSION_HUD_MENU_PATH = "Little Helpers/Change Render Version"
 SPLIT_LAYERS_MENU_PATH = "Little Helpers/Split Layers"
 REPATH_PASTE_MENU_PATH = "Little Helpers/Repath Paste"  # Alt+V, standalone -- never touches native Edit/Paste (Ctrl+V)
 TOGGLE_MENU_PATH = "Little Helpers/Dev Mode (F12)"

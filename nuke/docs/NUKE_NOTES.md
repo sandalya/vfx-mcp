@@ -115,7 +115,7 @@ Contrary to what earlier plans assumed: this machine has **Nuke 15.0v4**
 prefs — no `menu.py`, no `little_helpers`. There is no local Nuke lane to
 fall back on, and standing one up would only exercise two of the three
 tools: `Split Layers` needs the pipeline's `pl_scripts` (share-only) and
-`Create Layer Branch` needs `$FTRACK_RENDER_PATH` (launcher-only). Nuke 15
+`Create Render Branch` needs `$FTRACK_RENDER_PATH` (launcher-only). Nuke 15
 also means PySide2 rather than pc137's PySide6, so Qt behaviour would
 differ from production. Fast-loop iteration has to happen on pc137.
 

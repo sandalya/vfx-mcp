@@ -199,6 +199,19 @@ if [[ "$TARGET" == "nuke-dev" ]]; then
   deploy_dir "$LITTLE_HELPERS_DEV_PKG_DIR/split_layers" "$NUKE_LITTLE_HELPERS_DEV_SPLIT_LAYERS_REMOTE_DIR" skip_backup
   echo "=== little_helpers_dev/veriter ==="
   deploy_dir "$LITTLE_HELPERS_DEV_PKG_DIR/veriter" "$NUKE_LITTLE_HELPERS_DEV_VERITER_REMOTE_DIR" skip_backup
+
+  # icons/ is *.png, not *.py -- deploy_dir only globs *.py, so this can't
+  # reuse it. Menu icons (little_helpers.__init__._MENU_ICON_PATH) live
+  # here; added 2026-09-12.
+  if [ -d "$LITTLE_HELPERS_DEV_PKG_DIR/icons" ]; then
+    echo "=== little_helpers_dev/icons ==="
+    NUKE_LITTLE_HELPERS_DEV_ICONS_REMOTE_DIR="$NUKE_LITTLE_HELPERS_DEV_REMOTE_DIR/icons"
+    echo "==> Ensure $NUKE_LITTLE_HELPERS_DEV_ICONS_REMOTE_DIR exists"
+    ssh pc137 "powershell -Command \"New-Item -ItemType Directory -Force -Path '$NUKE_LITTLE_HELPERS_DEV_ICONS_REMOTE_DIR' | Out-Null\""
+    echo "==> SCP $LITTLE_HELPERS_DEV_PKG_DIR/icons/*.png -> pc137:$NUKE_LITTLE_HELPERS_DEV_ICONS_REMOTE_DIR"
+    scp "$LITTLE_HELPERS_DEV_PKG_DIR"/icons/*.png "pc137:$NUKE_LITTLE_HELPERS_DEV_ICONS_REMOTE_DIR/"
+  fi
+
   echo "==> Clean stale __pycache__ under little_helpers_dev"
   ssh pc137 "powershell -Command \"Get-ChildItem -Path '$NUKE_LITTLE_HELPERS_DEV_REMOTE_DIR' -Recurse -Filter '__pycache__' -Directory | Remove-Item -Recurse -Force\""
 

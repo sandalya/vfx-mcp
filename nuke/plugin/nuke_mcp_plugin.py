@@ -317,8 +317,8 @@ def cmd_print_test():
 def register_menu():
     """Idempotent -- safe to call repeatedly without piling up duplicate
     menu entries (removes the old item at MENU_PATH first, if present).
-    Infra-only now -- the product tools (Create Layer Branch / Change Layer
-    Version / Split Layers) register themselves via
+    Infra-only now -- the product tools (Create Render Branch / Change
+    Render Version / Split Layers / Repath Paste) register themselves via
     little_helpers.register_menu() instead, so this and that map 1:1 onto
     the two modules."""
     menu = nuke.menu("Nodes")
